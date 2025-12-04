@@ -421,12 +421,17 @@ const App: React.FC = () => {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash-preview-tts",
-            contents: { parts: [{ text: scriptText }] },
+            contents: { 
+                parts: [{ 
+                    text: scriptText
+                }] 
+            },
             config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
                     voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Aoede' } 
+                        // Switched to Charon for a calmer, more professional tone
+                        prebuiltVoiceConfig: { voiceName: 'Charon' } 
                     }
                 }
             }
