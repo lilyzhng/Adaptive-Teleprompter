@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings, Download, Type, MonitorPlay, Sparkles, ArrowRight, X, Loader2, Award, Lightbulb } from 'lucide-react';
-import { GoogleGenAI, Type as GeminiType } from '@google/genai';
+import { Settings, Download, Type, MonitorPlay, Sparkles, ArrowRight, X, Loader2, Award, Lightbulb, Volume2, StopCircle } from 'lucide-react';
+import { GoogleGenAI, Type as GeminiType, Modality } from '@google/genai';
 import { ScriptWord, ConnectionState, PerformanceReport } from './types';
 import { GeminiLiveService } from './services/geminiLiveService';
 import Teleprompter from './components/Teleprompter';
@@ -97,6 +97,27 @@ const audioBufferToWav = (buffer: AudioBuffer): Blob => {
   return new Blob([bufferArr], { type: 'audio/wav' });
 };
 
+// Utility to decode raw PCM data into an AudioBuffer
+const pcmToAudioBuffer = (
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): AudioBuffer => {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      // Convert int16 to float [-1.0, 1.0]
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
 // Utility to extract audio from video blob
 const extractAudioFromVideo = async (videoBlob: Blob): Promise<string> => {
     const arrayBuffer = await videoBlob.arrayBuffer();
@@ -173,6 +194,12 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [performanceReport, setPerformanceReport] = useState<PerformanceReport | null>(null);
   const [showReport, setShowReport] = useState(false);
+
+  // TTS State
+  const [isPlayingTTS, setIsPlayingTTS] = useState(false);
+  const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   // Settings
   const [fontSize, setFontSize] = useState(40);
@@ -262,6 +289,7 @@ const App: React.FC = () => {
       setScriptText("");
       setScriptWords([]);
       setActiveWordIndex(0);
+      stopTTS();
   }
 
   // -- ASR Matching Logic --
@@ -365,12 +393,99 @@ const App: React.FC = () => {
     }
   }, [scriptWords]);
 
+  // -- Text to Speech (Reference Audio) --
+
+  const stopTTS = () => {
+    if (audioSourceRef.current) {
+        try {
+            audioSourceRef.current.stop();
+        } catch(e) {
+            // ignore if already stopped
+        }
+        audioSourceRef.current = null;
+    }
+    setIsPlayingTTS(false);
+  };
+
+  const generateAndPlayTTS = async () => {
+    if (isPlayingTTS) {
+        stopTTS();
+        return;
+    }
+    
+    if (!scriptText.trim()) return;
+    
+    setIsGeneratingTTS(true);
+    
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash-preview-tts",
+            contents: { parts: [{ text: scriptText }] },
+            config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: 'Aoede' } 
+                    }
+                }
+            }
+        });
+
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (!base64Audio) {
+            throw new Error("No audio data returned");
+        }
+
+        if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        
+        // Resume context if suspended (browser policy)
+        if (audioContextRef.current.state === 'suspended') {
+            await audioContextRef.current.resume();
+        }
+
+        const binaryString = atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        // Decode audio data manually because it's raw PCM without headers
+        const audioBuffer = pcmToAudioBuffer(bytes, audioContextRef.current, 24000, 1);
+
+        const source = audioContextRef.current.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContextRef.current.destination);
+        
+        source.onended = () => {
+            setIsPlayingTTS(false);
+            audioSourceRef.current = null;
+        };
+        
+        audioSourceRef.current = source;
+        source.start();
+        setIsPlayingTTS(true);
+
+    } catch (error) {
+        console.error("TTS Error:", error);
+        alert("Failed to generate speech preview. Please try again.");
+    } finally {
+        setIsGeneratingTTS(false);
+    }
+  };
+
 
   // -- Recording & AI --
 
   const startRecording = async () => {
     if (!stream) return;
     
+    // Stop TTS if playing
+    stopTTS();
+
     setRecordedChunks([]);
     setRecordingDuration(0);
     setPerformanceReport(null);
@@ -548,12 +663,35 @@ const App: React.FC = () => {
                              <div className="w-1.5 h-1.5 rounded-full bg-gold"></div>
                              <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Script Editor</span>
                         </div>
-                        <button 
-                            onClick={handleClearScript}
-                            className="text-xs font-medium text-gray-400 hover:text-red-500 transition-colors px-2 py-1"
-                        >
-                            Clear
-                        </button>
+                        <div className="flex items-center gap-4">
+                            <button 
+                                onClick={generateAndPlayTTS}
+                                disabled={isGeneratingTTS || !scriptText}
+                                className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider transition-colors ${isPlayingTTS ? 'text-red-500 animate-pulse' : 'text-gold hover:text-charcoal'}`}
+                                title="Listen to an AI read your script"
+                            >
+                                {isGeneratingTTS ? (
+                                    <Loader2 size={14} className="animate-spin" />
+                                ) : isPlayingTTS ? (
+                                    <>
+                                        <StopCircle size={14} />
+                                        <span>Stop Audio</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Volume2 size={14} />
+                                        <span>Listen to AI</span>
+                                    </>
+                                )}
+                            </button>
+                            <div className="h-4 w-px bg-gray-200"></div>
+                            <button 
+                                onClick={handleClearScript}
+                                className="text-xs font-medium text-gray-400 hover:text-red-500 transition-colors"
+                            >
+                                Clear
+                            </button>
+                        </div>
                     </div>
                     
                     {/* Text Area */}
@@ -678,12 +816,34 @@ const App: React.FC = () => {
                   <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl border border-[#E6E6E6] flex flex-col h-[80vh]">
                     <div className="flex justify-between items-center px-8 py-6 border-b border-[#F0F0F0]">
                         <h2 className="text-2xl font-serif font-bold text-charcoal">Edit Script</h2>
-                        <button 
-                           onClick={() => setIsEditMode(false)}
-                           className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-                        >
-                            <X size={24} className="text-gray-500" />
-                        </button>
+                        <div className="flex items-center gap-6">
+                            <button 
+                                onClick={generateAndPlayTTS}
+                                disabled={isGeneratingTTS || !scriptText}
+                                className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider transition-colors ${isPlayingTTS ? 'text-red-500 animate-pulse' : 'text-gold hover:text-charcoal'}`}
+                            >
+                                {isGeneratingTTS ? (
+                                    <Loader2 size={14} className="animate-spin" />
+                                ) : isPlayingTTS ? (
+                                    <>
+                                        <StopCircle size={14} />
+                                        <span>Stop Audio</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Volume2 size={14} />
+                                        <span>Listen to AI</span>
+                                    </>
+                                )}
+                            </button>
+                            <div className="h-6 w-px bg-gray-200"></div>
+                            <button 
+                                onClick={() => setIsEditMode(false)}
+                                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                            >
+                                <X size={24} className="text-gray-500" />
+                            </button>
+                        </div>
                     </div>
                     
                     <div className="flex-1 p-4 bg-white overflow-hidden">
@@ -770,7 +930,7 @@ const App: React.FC = () => {
                              <button 
                                 onClick={() => setShowReport(false)}
                                 className="px-6 py-2 bg-charcoal text-white rounded-full text-sm font-bold hover:bg-black transition-colors"
-                             >
+                            >
                                  Close Report
                              </button>
                          </div>
