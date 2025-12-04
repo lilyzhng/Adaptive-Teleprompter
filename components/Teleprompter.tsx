@@ -66,7 +66,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({
       }}
     >
       <div 
-        className="max-w-3xl mx-auto transition-all duration-300 ease-in-out font-serif"
+        className="max-w-6xl mx-auto transition-all duration-300 ease-in-out font-serif"
         style={{ fontSize: `${fontSize}px` }}
       >
         {paragraphs.map((paragraph, pIndex) => (

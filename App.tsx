@@ -9,7 +9,13 @@ import Teleprompter from './components/Teleprompter';
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 // Utility to clean text for comparison
-const cleanText = (text: string) => text.toLowerCase().replace(/[^\w\s]|_/g, "").trim();
+const cleanText = (text: string) => 
+  text.toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'") // Normalize curly single quotes
+    .replace(/[\u201C\u201D]/g, '"') // Normalize curly double quotes
+    .replace(/-/g, " ")              // Treat hyphens as spaces (redundancy for safety)
+    .replace(/[^\w\s']|_/g, "")      // Remove punctuation except apostrophes
+    .trim();
 
 // Utility to convert blob to base64
 const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -136,8 +142,8 @@ const isMatch = (scriptWord: string, spokenWord: string): boolean => {
     // Fuzzy match for longer words
     const dist = getLevenshteinDistance(scriptWord, spokenWord);
     
-    // Allow ~30% error rate for longer words
-    return dist <= Math.ceil(len * 0.3); 
+    // Relaxed threshold: Allow ~40% error rate to catch mispronunciations/ASR drift
+    return dist <= Math.floor(len * 0.4); 
 };
 
 const App: React.FC = () => {
@@ -213,8 +219,12 @@ const App: React.FC = () => {
   // -- Script Processing --
 
   const processScript = (text: string) => {
+      // Pre-process: Replace hyphens with spaces to split compound words (e.g. "self-driving" -> "self driving")
+      // This is crucial for matching because ASR usually sees them as separate words.
+      const safeText = text.replace(/-/g, ' ');
+
       // Split by newline first to preserve paragraph structure
-      const paragraphs = text.split(/\n/);
+      const paragraphs = safeText.split(/\n/);
       const processedWords: ScriptWord[] = [];
       let isFirstWordOfText = true;
 
@@ -269,7 +279,7 @@ const App: React.FC = () => {
       if (currentIndex === -1) currentIndex = currentWords.length;
 
       // --- Robust Matching Algorithm ---
-      // We look ahead in the script to find the best matching sequence for the incoming words.
+      // Look ahead window size
       const LOOKAHEAD = 60; 
       const searchEnd = Math.min(currentWords.length, currentIndex + LOOKAHEAD);
       
@@ -294,18 +304,42 @@ const App: React.FC = () => {
 
         if (matchLength > 0) {
             const distance = s - currentIndex;
-            let requiredLength = 1;
-            if (distance > 0) requiredLength = 2; // Need 2 words to skip
-            if (distance > 5) requiredLength = 3; // Need 3 words to skip far
             
-            if (matchLength >= requiredLength) {
-                const score = (matchLength * 10) - (distance * 0.2);
-                if (score > bestMatch.score) {
-                    bestMatch = {
-                        endIndex: s + matchLength,
-                        score: score
-                    };
+            // Base score favors longer matches
+            let score = (matchLength * 10);
+            // Penalty for skipping words
+            score -= (distance * 2);
+
+            // Boost score if we are continuing directly (no skip)
+            if (distance === 0) score += 5;
+
+            // Smart Skip Validation:
+            // We only allow a jump/skip if there is sufficient evidence.
+            // Evidence = (Multiple words matched) OR (One significant long word matched and short skip)
+            let isValidJump = false;
+            
+            if (distance === 0) {
+                // If no skip, any match is valid
+                isValidJump = true; 
+            } else {
+                // If skipping, we need to be sure.
+                const matchedWordLen = currentWords[s].cleanWord.length;
+                
+                if (matchLength >= 2) {
+                    // Two consecutive words matched is strong evidence
+                    isValidJump = true;
+                } else if (matchLength === 1 && matchedWordLen >= 5 && distance <= 2) {
+                     // "Beren" (5 chars) matched, and we only skipped 1-2 words.
+                     // This recovers from single missed words in ASR.
+                     isValidJump = true;
                 }
+            }
+            
+            if (isValidJump && score > bestMatch.score) {
+                bestMatch = {
+                    endIndex: s + matchLength,
+                    score: score
+                };
             }
         }
       }
