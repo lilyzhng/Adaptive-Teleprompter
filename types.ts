@@ -3,6 +3,7 @@ export interface ScriptWord {
   word: string;
   cleanWord: string;
   isSpoken: boolean;
+  isParagraphStart?: boolean;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';

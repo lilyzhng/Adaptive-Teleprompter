@@ -30,8 +30,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({
 
   if (words.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-white/30 italic pointer-events-none text-xl font-light tracking-wide">
-        Paste your script to begin...
+      <div className="flex items-center justify-center h-full text-white/50 italic pointer-events-none text-2xl font-serif tracking-wide">
+        Waiting for script...
       </div>
     );
   }
@@ -46,7 +46,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({
       }}
     >
       <div 
-        className="max-w-5xl mx-auto leading-tight transition-all duration-300 ease-in-out font-bold tracking-wide"
+        className="max-w-4xl mx-auto leading-normal transition-all duration-300 ease-in-out font-serif"
         style={{ fontSize: `${fontSize}px` }}
       >
         {words.map((wordObj, index) => {
@@ -55,20 +55,25 @@ const Teleprompter: React.FC<TeleprompterProps> = ({
           const isActive = index === activeWordIndex;
           
           return (
-            <span
-              key={wordObj.id}
-              ref={isActive ? activeWordRef : null}
-              className={`
-                inline-block mx-1.5 my-1 transition-colors duration-200 rounded px-1
-                ${isSpoken ? 'text-green-400' : 'text-white'}
-              `}
-              style={{
-                textShadow: '0 4px 8px rgba(0,0,0,0.9)', // Strong shadow for contrast
-                opacity: isSpoken ? 1 : opacity // Apply user-defined opacity to future text
-              }}
-            >
-              {wordObj.word}
-            </span>
+            <React.Fragment key={wordObj.id}>
+              {wordObj.isParagraphStart && (
+                  // Spacer div to force a new line/paragraph visual break
+                  <div className="w-full" style={{ height: '0.8em' }} aria-hidden="true" />
+              )}
+              <span
+                ref={isActive ? activeWordRef : null}
+                className={`
+                  inline-block mx-1.5 my-1 transition-colors duration-200 rounded px-1
+                  ${isSpoken ? 'text-green-400' : 'text-white'}
+                `}
+                style={{
+                  textShadow: '0 2px 8px rgba(0,0,0,0.8)', // Strong shadow for contrast on video
+                  opacity: isSpoken ? 1 : opacity // Apply user-defined opacity to future text
+                }}
+              >
+                {wordObj.word}
+              </span>
+            </React.Fragment>
           );
         })}
       </div>

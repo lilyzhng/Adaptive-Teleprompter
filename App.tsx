@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings, Download, Type, MonitorPlay, Sparkles } from 'lucide-react';
+import { Settings, Download, Type, MonitorPlay, Sparkles, ArrowRight, X } from 'lucide-react';
 import { ScriptWord, ConnectionState } from './types';
 import { GeminiLiveService } from './services/geminiLiveService';
 import Teleprompter from './components/Teleprompter';
@@ -33,11 +33,6 @@ const getLevenshteinDistance = (a: string, b: string) => {
   }
   return matrix[b.length][a.length];
 };
-
-const COMMON_WORDS = new Set([
-  'a', 'an', 'the', 'to', 'of', 'and', 'in', 'on', 'at', 'is', 'it', 'that', 'i', 'my', 'we', 
-  'for', 'with', 'this', 'but', 'not', 'are', 'was', 'were', 'be', 'so', 'if', 'or', 'as', 'by'
-]);
 
 const isMatch = (scriptWord: string, spokenWord: string): boolean => {
     if (!scriptWord || !spokenWord) return false;
@@ -79,7 +74,7 @@ const App: React.FC = () => {
   const [liveService, setLiveService] = useState<GeminiLiveService | null>(null);
 
   // Settings
-  const [fontSize, setFontSize] = useState(48);
+  const [fontSize, setFontSize] = useState(40);
   const [opacity, setOpacity] = useState(0.4);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -123,13 +118,32 @@ const App: React.FC = () => {
   // -- Script Processing --
 
   const processScript = (text: string) => {
-      const words = text.split(/\s+/).filter(w => w.length > 0).map(word => ({
-          id: generateId(),
-          word: word,
-          cleanWord: cleanText(word),
-          isSpoken: false
-      }));
-      setScriptWords(words);
+      // Split by newline first to preserve paragraph structure
+      const paragraphs = text.split(/\n/);
+      const processedWords: ScriptWord[] = [];
+      let isFirstWordOfText = true;
+
+      paragraphs.forEach((para) => {
+          const trimmedPara = para.trim();
+          if (!trimmedPara) return; // Skip empty lines
+
+          const wordsInPara = trimmedPara.split(/\s+/).filter(w => w.length > 0);
+          
+          wordsInPara.forEach((word, index) => {
+              processedWords.push({
+                  id: generateId(),
+                  word: word,
+                  cleanWord: cleanText(word),
+                  isSpoken: false,
+                  // Mark as paragraph start if it's the first word of the paragraph
+                  // (but not the very first word of the entire script)
+                  isParagraphStart: index === 0 && !isFirstWordOfText
+              });
+              isFirstWordOfText = false;
+          });
+      });
+
+      setScriptWords(processedWords);
       setActiveWordIndex(0);
   }
 
@@ -161,9 +175,7 @@ const App: React.FC = () => {
 
       // --- Robust Matching Algorithm ---
       // We look ahead in the script to find the best matching sequence for the incoming words.
-      // We penalize skipping words to prevent jumping too fast, unless there is a strong sequence match.
-
-      const LOOKAHEAD = 60; // How far ahead to scan for a match
+      const LOOKAHEAD = 60; 
       const searchEnd = Math.min(currentWords.length, currentIndex + LOOKAHEAD);
       
       let bestMatch = {
@@ -171,45 +183,28 @@ const App: React.FC = () => {
         score: -1
       };
 
-      // 1. Iterate through potential start positions in the script
       for (let s = currentIndex; s < searchEnd; s++) {
         let matchLength = 0;
         
-        // 2. Try to align the incoming words with the script starting at 's'
         for (let i = 0; i < incomingWords.length; i++) {
             if (s + i >= currentWords.length) break;
-
             const scriptW = currentWords[s + i].cleanWord;
             const inputW = incomingWords[i];
-
             if (isMatch(scriptW, inputW)) {
                 matchLength++;
             } else {
-                // Stop counting on first mismatch to enforce sequential matching
-                // We could allow 1 gap, but strict sequence is safer for now
                 break;
             }
         }
 
         if (matchLength > 0) {
-            // 3. Calculate Score
-            // Distance from current position (Penalty for skipping)
             const distance = s - currentIndex;
-            
-            // Dynamic Requirement:
-            // - If we are right at the cursor (distance 0), even 1 word match is good.
-            // - If we skip words (distance > 0), we need stronger evidence (more consecutive matches).
             let requiredLength = 1;
             if (distance > 0) requiredLength = 2; // Need 2 words to skip
             if (distance > 5) requiredLength = 3; // Need 3 words to skip far
             
-            // If the word is very unique (long), we can be slightly more lenient on skips?
-            // For now, let's stick to sequence length as the primary robust factor.
-
             if (matchLength >= requiredLength) {
-                // Score formula: Reward length heavily, slight penalty for distance
                 const score = (matchLength * 10) - (distance * 0.2);
-                
                 if (score > bestMatch.score) {
                     bestMatch = {
                         endIndex: s + matchLength,
@@ -220,7 +215,6 @@ const App: React.FC = () => {
         }
       }
 
-      // Only update if we found a valid match that moves us forward
       if (bestMatch.endIndex > currentIndex) {
          return currentWords.map((w, i) => ({
            ...w,
@@ -317,7 +311,7 @@ const App: React.FC = () => {
     document.body.appendChild(a);
     a.style.display = 'none';
     a.href = url;
-    a.download = `teleprompter-recording-${new Date().toISOString()}.mp4`; 
+    a.download = `adaptive-recording-${new Date().toISOString()}.mp4`; 
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -331,83 +325,88 @@ const App: React.FC = () => {
   // -- Start Screen Render --
   if (!hasStarted) {
       return (
-        <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
-            {/* Background Effects */}
-            <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-900/20 rounded-full blur-[120px]"></div>
-            <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-900/20 rounded-full blur-[120px]"></div>
+        <div className="min-h-screen bg-cream text-charcoal flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
+            {/* Background Texture/Elements */}
+            <div className="absolute top-0 left-0 w-full h-full opacity-40 pointer-events-none" 
+                 style={{ 
+                     backgroundImage: 'radial-gradient(circle at 15% 15%, #F0EBE0 0%, transparent 20%), radial-gradient(circle at 85% 85%, #E8E0D0 0%, transparent 20%)' 
+                 }}>
+            </div>
 
             {/* Header */}
-            <div className="text-center mb-10 z-10">
-                <h1 className="text-5xl md:text-6xl font-bold mb-3 tracking-tight">
-                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
-                        Adaptive Teleprompter
-                    </span>
+            <div className="text-center mb-12 z-10 max-w-2xl mx-auto">
+                <div className="mb-4 inline-block px-4 py-1.5 rounded-full border border-gold/40 text-gold text-[10px] font-bold tracking-[0.2em] uppercase bg-white/50 backdrop-blur-sm">
+                    AI For Video Creation
+                </div>
+                <h1 className="text-6xl md:text-7xl font-serif mb-6 tracking-tight text-charcoal">
+                    Adaptive Teleprompter
                 </h1>
-                <p className="text-gray-400 text-lg font-light tracking-wide">
-                    A teleprompter that listens
+                <p className="text-gray-500 text-lg font-serif italic max-w-lg mx-auto leading-relaxed">
+                    A responsive teleprompter that listens to your voice and scrolls in real-time, powered by Gemini.
                 </p>
             </div>
 
             {/* Script Input Card */}
-            <div className="w-full max-w-2xl z-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
-                <div className="bg-gray-900 rounded-2xl shadow-2xl border border-gray-800 overflow-hidden">
+            <div className="w-full max-w-3xl z-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] border border-[#EBE8E0] overflow-hidden">
                     {/* Card Header */}
-                    <div className="px-6 py-4 bg-gray-950/50 border-b border-gray-800 flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                             <Type size={14} className="text-gray-500" />
-                             <span className="text-xs font-bold text-gray-500 tracking-widest uppercase">Script Editor</span>
+                    <div className="px-8 py-5 border-b border-[#F0F0F0] flex justify-between items-center bg-white">
+                        <div className="flex items-center gap-3">
+                             <div className="w-1.5 h-1.5 rounded-full bg-gold"></div>
+                             <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Script Editor</span>
                         </div>
                         <button 
                             onClick={handleClearScript}
-                            className="text-xs font-medium text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800"
+                            className="text-xs font-medium text-gray-400 hover:text-red-500 transition-colors px-2 py-1"
                         >
                             Clear
                         </button>
                     </div>
                     
                     {/* Text Area */}
-                    <div className="p-1 bg-gray-900">
+                    <div className="p-2 bg-white">
                         <textarea
-                            className="w-full h-80 bg-gray-900 text-white p-6 outline-none resize-none text-lg leading-relaxed font-light placeholder-gray-700"
-                            placeholder="Paste your script here... The teleprompter will detect your speech and scroll automatically."
+                            className="w-full h-80 bg-white text-charcoal p-6 outline-none resize-none text-xl leading-relaxed font-light placeholder-gray-300 font-serif"
+                            placeholder="Paste your script here..."
                             value={scriptText}
                             onChange={handleScriptChange}
                         />
                     </div>
                     
                     {/* Footer Stats */}
-                    <div className="bg-gray-950/30 px-6 py-3 border-t border-gray-800 flex justify-between text-xs text-gray-500 font-mono">
+                    <div className="bg-[#FAF9F6] px-8 py-4 border-t border-[#F0F0F0] flex justify-between text-xs text-gray-400 font-medium tracking-wide">
                         <span>{scriptWords.length} words</span>
                         <span>~{Math.ceil(scriptWords.length / 2.5)}s estimated</span>
                     </div>
                 </div>
 
                 {/* Start Button */}
-                <div className="mt-8 flex justify-center">
+                <div className="mt-10 flex justify-center">
                     <button
                         onClick={() => setHasStarted(true)}
                         disabled={scriptWords.length === 0}
                         className={`
-                            px-10 py-4 rounded-full font-bold text-lg flex items-center gap-3 transition-all transform shadow-xl
+                            group px-10 py-4 rounded-full font-medium text-lg flex items-center gap-3 transition-all transform duration-300
                             ${scriptWords.length > 0 
-                                ? 'bg-blue-600 hover:bg-blue-500 hover:scale-105 hover:shadow-blue-500/25 text-white cursor-pointer' 
-                                : 'bg-gray-800 text-gray-500 cursor-not-allowed'}
+                                ? 'bg-charcoal text-white hover:bg-black hover:-translate-y-1 shadow-lg shadow-black/10' 
+                                : 'bg-[#E0E0E0] text-gray-400 cursor-not-allowed'}
                         `}
                     >
-                        <span>Start Camera & Prompter</span>
+                        <span>Start Session</span>
+                        <ArrowRight size={18} className={`transition-transform duration-300 ${scriptWords.length > 0 ? 'group-hover:translate-x-1' : ''}`} />
                     </button>
                 </div>
 
                 {/* Permission Status */}
-                <div className="mt-6 text-center h-6">
+                <div className="mt-8 text-center h-6">
                     {!stream && !permissionError && (
-                         <div className="flex items-center justify-center gap-2 text-gray-500 text-sm animate-pulse">
-                            <Sparkles size={14} />
+                         <div className="flex items-center justify-center gap-2 text-gray-400 text-sm animate-pulse">
+                            <Sparkles size={14} className="text-gold" />
                             <span>Initializing Camera...</span>
                          </div>
                     )}
                     {permissionError && (
-                        <span className="text-red-400 text-sm bg-red-900/20 px-3 py-1 rounded-full border border-red-900/50">
+                        <span className="text-red-500 text-sm bg-red-50 px-3 py-1 rounded-full border border-red-100">
                             {permissionError}
                         </span>
                     )}
@@ -419,49 +418,44 @@ const App: React.FC = () => {
 
   // -- Main App Render --
   return (
-    <div className="relative h-screen w-screen bg-black overflow-hidden flex flex-col font-sans">
+    <div className="relative h-screen w-screen bg-cream overflow-hidden flex flex-col font-sans">
       
       {/* --- Top Header Bar --- */}
-      <div className="h-14 bg-black border-b border-gray-800 flex items-center justify-between px-6 z-50 shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="h-16 bg-cream/90 backdrop-blur-md border-b border-[#E6E6E6] flex items-center justify-between px-8 z-50 shrink-0">
+        <div className="flex items-center gap-4">
             <button 
                 onClick={() => setHasStarted(false)}
-                className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20 hover:bg-blue-500 transition-colors"
+                className="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors group"
                 title="Back to Setup"
             >
-                <MonitorPlay size={20} className="text-white" />
+                <MonitorPlay size={16} className="text-gray-600 group-hover:text-charcoal" />
             </button>
-            <h1 className="text-white font-bold text-lg tracking-tight">Adaptive Teleprompter</h1>
+            <h1 className="text-charcoal font-serif font-bold text-xl tracking-tight">Adaptive Teleprompter</h1>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-6">
              {/* AI Status Pill */}
-             <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-wider transition-colors duration-300 ${
-                 connectionState === 'connected' ? 'bg-green-900/30 text-green-400 border border-green-800' : 'bg-gray-800 text-gray-500 border border-gray-700'
+             <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase transition-colors duration-300 ${
+                 connectionState === 'connected' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500 border border-gray-200'
              }`}>
-                <div className={`w-2 h-2 rounded-full ${connectionState === 'connected' ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`}></div>
-                {connectionState === 'connected' ? 'AI ACTIVE' : connectionState === 'connecting' ? 'CONNECTING...' : 'AI READY'}
+                <div className={`w-1.5 h-1.5 rounded-full ${connectionState === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
+                {connectionState === 'connected' ? 'AI Active' : connectionState === 'connecting' ? 'Connecting...' : 'AI Ready'}
              </div>
 
              {/* Rec Status */}
-             {recordingState === 'recording' ? (
-                 <div className="flex items-center gap-2 text-red-500 font-bold text-xs tracking-wider animate-pulse">
-                     <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+             {recordingState === 'recording' && (
+                 <div className="flex items-center gap-2 text-red-500 font-bold text-[10px] tracking-widest uppercase animate-pulse">
+                     <div className="w-2 h-2 bg-red-500 rounded-full"></div>
                      REC
                  </div>
-             ) : (
-                <div className="flex items-center gap-2 text-gray-600 font-bold text-xs tracking-wider">
-                    <div className="w-3 h-3 bg-gray-600 rounded-full"></div>
-                    REC
-                </div>
              )}
         </div>
       </div>
 
       {/* --- Main Viewport --- */}
-      <div className="relative flex-1 bg-gray-900 overflow-hidden">
+      <div className="relative flex-1 bg-[#1a1a1a] overflow-hidden">
         {permissionError ? (
-          <div className="flex items-center justify-center h-full text-red-400 p-8 text-center">
+          <div className="flex items-center justify-center h-full text-white/50 p-8 text-center font-serif italic">
             {permissionError}
           </div>
         ) : (
@@ -487,32 +481,40 @@ const App: React.FC = () => {
 
             {/* Edit Mode Modal (Overlay) */}
             {isEditMode && (
-               <div className="absolute inset-0 z-30 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-                  <div className="w-full max-w-3xl bg-gray-900 rounded-2xl shadow-2xl p-6 border border-gray-800">
-                    <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-4">
-                        <h2 className="text-xl font-bold text-white flex items-center gap-3">
-                           <Type size={20} className="text-blue-500"/> 
-                           Edit Script
-                        </h2>
-                        <div className="flex gap-4">
-                             <button onClick={handleClearScript} className="text-sm text-gray-500 hover:text-red-400 transition-colors">Clear All</button>
-                             <button 
+               <div className="absolute inset-0 z-30 bg-cream/95 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+                  <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl border border-[#E6E6E6] flex flex-col h-[80vh]">
+                    <div className="flex justify-between items-center px-8 py-6 border-b border-[#F0F0F0]">
+                        <h2 className="text-2xl font-serif font-bold text-charcoal">Edit Script</h2>
+                        <button 
+                           onClick={() => setIsEditMode(false)}
+                           className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                        >
+                            <X size={24} className="text-gray-500" />
+                        </button>
+                    </div>
+                    
+                    <div className="flex-1 p-4 bg-white overflow-hidden">
+                         <textarea
+                            className="w-full h-full bg-transparent text-charcoal p-4 outline-none resize-none text-2xl leading-relaxed font-serif placeholder-gray-300"
+                            placeholder="Type your script..."
+                            value={scriptText}
+                            onChange={handleScriptChange}
+                        />
+                    </div>
+
+                    <div className="px-8 py-5 border-t border-[#F0F0F0] bg-[#FAF9F6] flex justify-between items-center rounded-b-2xl">
+                         <button onClick={handleClearScript} className="text-sm font-medium text-red-500 hover:text-red-600">
+                             Clear All
+                         </button>
+                         <div className="flex items-center gap-6">
+                            <span className="text-xs text-gray-400 font-mono">{scriptWords.length} words</span>
+                            <button 
                                 onClick={() => setIsEditMode(false)}
-                                className="text-sm text-blue-400 hover:text-blue-300 font-bold transition-colors"
+                                className="px-6 py-2 bg-charcoal text-white rounded-full text-sm font-bold hover:bg-black transition-colors"
                             >
                                 Done
                             </button>
-                        </div>
-                    </div>
-                    <textarea
-                        className="w-full h-80 bg-gray-950/50 text-white p-4 rounded-xl focus:ring-1 focus:ring-blue-500 outline-none resize-none border border-gray-800 text-lg leading-relaxed font-light"
-                        placeholder="Paste your script here..."
-                        value={scriptText}
-                        onChange={handleScriptChange}
-                    />
-                    <div className="mt-4 flex justify-between text-xs text-gray-500 font-mono">
-                        <span>{scriptWords.length} words</span>
-                        <span>~{Math.ceil(scriptWords.length / 2.5)} seconds</span>
+                         </div>
                     </div>
                   </div>
                </div>
@@ -522,43 +524,43 @@ const App: React.FC = () => {
       </div>
 
       {/* --- Bottom Control Bar --- */}
-      <div className="h-24 bg-black border-t border-gray-800 flex items-center justify-between px-8 z-50 shrink-0">
+      <div className="h-24 bg-cream/90 backdrop-blur-md border-t border-[#E6E6E6] flex items-center justify-between px-10 z-50 shrink-0">
          
          {/* Left: Settings */}
-         <div className="flex items-center gap-6 w-1/3">
+         <div className="flex items-center gap-4 w-1/3">
             <div className="relative group">
                 <button 
                     onClick={() => setShowSettings(!showSettings)}
-                    className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all"
+                    className={`p-3 rounded-full transition-all duration-300 ${showSettings ? 'bg-charcoal text-white' : 'text-gray-500 hover:bg-gray-200 hover:text-charcoal'}`}
                     title="Settings"
                 >
-                    <Settings size={22} />
+                    <Settings size={20} />
                 </button>
                 
                 {showSettings && (
-                    <div className="absolute bottom-full left-0 mb-4 w-72 bg-gray-900/95 backdrop-blur rounded-xl shadow-2xl border border-gray-700 p-6">
-                        <h3 className="text-xs font-bold text-gray-500 mb-6 uppercase tracking-wider">Display Settings</h3>
-                        <div className="space-y-6">
+                    <div className="absolute bottom-full left-0 mb-6 w-72 bg-white rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-[#EBE8E0] p-6 animate-in slide-in-from-bottom-2">
+                        <h3 className="text-[10px] font-bold text-gold mb-6 uppercase tracking-widest">Display Settings</h3>
+                        <div className="space-y-8">
                             <div>
-                                <div className="flex justify-between text-xs text-gray-400 mb-2">
+                                <div className="flex justify-between text-xs font-medium text-gray-500 mb-3">
                                     <span>Text Size</span>
                                     <span>{fontSize}px</span>
                                 </div>
                                 <input 
                                     type="range" min="24" max="96" value={fontSize} 
                                     onChange={(e) => setFontSize(parseInt(e.target.value))}
-                                    className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                    className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-charcoal"
                                 />
                             </div>
                             <div>
-                                <div className="flex justify-between text-xs text-gray-400 mb-2">
+                                <div className="flex justify-between text-xs font-medium text-gray-500 mb-3">
                                     <span>Future Text Visibility</span>
                                     <span>{Math.round(opacity * 100)}%</span>
                                 </div>
                                 <input 
                                     type="range" min="0" max="1" step="0.05" value={opacity} 
                                     onChange={(e) => setOpacity(parseFloat(e.target.value))}
-                                    className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                    className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-charcoal"
                                 />
                             </div>
                         </div>
@@ -568,45 +570,43 @@ const App: React.FC = () => {
             
             <button 
                 onClick={() => setIsEditMode(true)}
-                className="p-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-all"
+                className="p-3 text-gray-500 hover:bg-gray-200 hover:text-charcoal rounded-full transition-all"
                 title="Edit Script"
             >
-                <Type size={22} />
+                <Type size={20} />
             </button>
          </div>
 
          {/* Center: Record Button */}
-         <div className="flex items-center justify-center gap-6 w-1/3">
+         <div className="flex items-center justify-center w-1/3">
              {recordingState === 'idle' ? (
                 <button 
                     onClick={startRecording}
                     disabled={scriptWords.length === 0}
                     className={`
-                        w-16 h-16 rounded-full flex items-center justify-center border-4 transition-all duration-300
+                        w-16 h-16 rounded-full flex items-center justify-center border-[3px] transition-all duration-300
                         ${scriptWords.length > 0 
-                            ? 'border-white bg-red-600 hover:bg-red-500 hover:scale-105 shadow-lg shadow-red-900/40' 
-                            : 'border-gray-700 bg-gray-800 cursor-not-allowed opacity-50'}
+                            ? 'border-charcoal bg-transparent hover:bg-charcoal group' 
+                            : 'border-gray-300 bg-gray-100 cursor-not-allowed opacity-50'}
                     `}
                     title={scriptWords.length === 0 ? "Add script to record" : "Start Recording"}
                 >
-                     <div className="w-6 h-6 bg-white rounded-md"></div>
+                     <div className={`w-6 h-6 rounded-full transition-colors duration-300 ${scriptWords.length > 0 ? 'bg-red-500 group-hover:bg-red-500' : 'bg-gray-300'}`}></div>
                 </button>
              ) : (
-                <div className="flex flex-col items-center gap-2">
-                    <button 
-                        onClick={stopRecording}
-                        className="w-16 h-16 rounded-full flex items-center justify-center border-4 border-red-500/50 bg-transparent hover:bg-red-500/10 transition-all group"
-                    >
-                        <div className="w-6 h-6 bg-red-500 rounded-sm group-hover:scale-90 transition-transform"></div>
-                    </button>
-                </div>
+                <button 
+                    onClick={stopRecording}
+                    className="w-16 h-16 rounded-full flex items-center justify-center border-[3px] border-red-500 bg-transparent hover:bg-red-50 transition-all group"
+                >
+                    <div className="w-6 h-6 bg-red-500 rounded-sm group-hover:scale-90 transition-transform"></div>
+                </button>
              )}
          </div>
 
          {/* Right: Actions & Info */}
-         <div className="flex items-center justify-end gap-4 w-1/3 text-gray-500 text-sm">
+         <div className="flex items-center justify-end gap-4 w-1/3 text-sm">
              {recordingState !== 'idle' && (
-                <div className="font-mono text-red-400 text-lg tracking-widest">
+                <div className="font-mono text-charcoal font-medium text-lg tracking-widest">
                     {formatTime(recordingDuration)}
                 </div>
              )}
@@ -614,10 +614,10 @@ const App: React.FC = () => {
              {recordingState === 'idle' && recordedChunks.length > 0 && (
                 <button 
                     onClick={downloadVideo}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-white text-black rounded-full font-bold hover:bg-gray-200 transition-colors shadow-lg"
+                    className="flex items-center gap-2 px-6 py-3 bg-charcoal text-white rounded-full text-xs font-bold tracking-wider uppercase hover:bg-black transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
                 >
-                    <Download size={18} />
-                    <span>Export Video</span>
+                    <Download size={16} />
+                    <span>Download</span>
                 </button>
              )}
          </div>
