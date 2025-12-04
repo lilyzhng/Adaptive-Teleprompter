@@ -34,19 +34,24 @@ const getLevenshteinDistance = (a: string, b: string) => {
   return matrix[b.length][a.length];
 };
 
-const COMMON_WORDS = new Set(['a', 'an', 'the', 'to', 'of', 'and', 'in', 'on', 'at', 'is', 'it', 'that', 'i', 'my', 'we']);
+const COMMON_WORDS = new Set([
+  'a', 'an', 'the', 'to', 'of', 'and', 'in', 'on', 'at', 'is', 'it', 'that', 'i', 'my', 'we', 
+  'for', 'with', 'this', 'but', 'not', 'are', 'was', 'were', 'be', 'so', 'if', 'or', 'as', 'by'
+]);
 
-const isMatch = (word1: string, word2: string): boolean => {
-    if (!word1 || !word2) return false;
-    if (word1 === word2) return true;
+const isMatch = (scriptWord: string, spokenWord: string): boolean => {
+    if (!scriptWord || !spokenWord) return false;
+    if (scriptWord === spokenWord) return true;
     
-    const len = Math.max(word1.length, word2.length);
-    // Strict for short words
-    if (len < 4) return word1 === word2; 
+    const len = Math.max(scriptWord.length, spokenWord.length);
+    
+    // Very short words must match exactly to avoid false positives (e.g. "a" vs "at")
+    if (len <= 3) return scriptWord === spokenWord; 
     
     // Fuzzy match for longer words
-    const dist = getLevenshteinDistance(word1, word2);
-    // Allow ~30% error rate for longer words (e.g. "meeting" vs "meetings")
+    const dist = getLevenshteinDistance(scriptWord, spokenWord);
+    
+    // Allow ~30% error rate for longer words
     return dist <= Math.ceil(len * 0.3); 
 };
 
@@ -145,86 +150,81 @@ const App: React.FC = () => {
   const handleTranscription = useCallback((transcription: string) => {
     if (!transcription) return;
     
-    // Clean and split incoming text
+    // Clean and split incoming text into words
     const incomingWords = transcription.split(/\s+/).map(cleanText).filter(Boolean);
     if (incomingWords.length === 0) return;
 
     setScriptWords(currentWords => {
-      // Find the first word that hasn't been spoken yet (our anchor)
+      // Find the current anchor point (first unspoken word)
       let currentIndex = currentWords.findIndex(w => !w.isSpoken);
       if (currentIndex === -1) currentIndex = currentWords.length;
 
-      let bestNewIndex = currentIndex;
-      let maxMatchLength = 0;
-      let bestMatchStartIndex = -1;
+      // --- Robust Matching Algorithm ---
+      // We look ahead in the script to find the best matching sequence for the incoming words.
+      // We penalize skipping words to prevent jumping too fast, unless there is a strong sequence match.
 
-      // SEARCH WINDOW: Look ahead X words in the script to find a match.
-      const SEARCH_WINDOW = 100; 
-      const searchEnd = Math.min(currentWords.length, currentIndex + SEARCH_WINDOW);
+      const LOOKAHEAD = 60; // How far ahead to scan for a match
+      const searchEnd = Math.min(currentWords.length, currentIndex + LOOKAHEAD);
+      
+      let bestMatch = {
+        endIndex: currentIndex, // Default to no change
+        score: -1
+      };
 
-      // Iterate through the script window
+      // 1. Iterate through potential start positions in the script
       for (let s = currentIndex; s < searchEnd; s++) {
+        let matchLength = 0;
         
-        // Try to match the incoming chunk against the script starting at 's'
+        // 2. Try to align the incoming words with the script starting at 's'
         for (let i = 0; i < incomingWords.length; i++) {
-            if (isMatch(currentWords[s].cleanWord, incomingWords[i])) {
-                
-                let matchLen = 1;
-                let s_next = s + 1;
-                let i_next = i + 1;
-                
-                while (
-                    s_next < currentWords.length && 
-                    i_next < incomingWords.length &&
-                    isMatch(currentWords[s_next].cleanWord, incomingWords[i_next])
-                ) {
-                    matchLen++;
-                    s_next++;
-                    i_next++;
-                }
+            if (s + i >= currentWords.length) break;
 
-                // Evaluate match quality
-                const scriptWordClean = currentWords[s].cleanWord;
-                const isShortWord = scriptWordClean.length <= 3;
-                const isCommon = COMMON_WORDS.has(scriptWordClean);
-                const isImmediateNext = (s === currentIndex);
+            const scriptW = currentWords[s + i].cleanWord;
+            const inputW = incomingWords[i];
+
+            if (isMatch(scriptW, inputW)) {
+                matchLength++;
+            } else {
+                // Stop counting on first mismatch to enforce sequential matching
+                // We could allow 1 gap, but strict sequence is safer for now
+                break;
+            }
+        }
+
+        if (matchLength > 0) {
+            // 3. Calculate Score
+            // Distance from current position (Penalty for skipping)
+            const distance = s - currentIndex;
+            
+            // Dynamic Requirement:
+            // - If we are right at the cursor (distance 0), even 1 word match is good.
+            // - If we skip words (distance > 0), we need stronger evidence (more consecutive matches).
+            let requiredLength = 1;
+            if (distance > 0) requiredLength = 2; // Need 2 words to skip
+            if (distance > 5) requiredLength = 3; // Need 3 words to skip far
+            
+            // If the word is very unique (long), we can be slightly more lenient on skips?
+            // For now, let's stick to sequence length as the primary robust factor.
+
+            if (matchLength >= requiredLength) {
+                // Score formula: Reward length heavily, slight penalty for distance
+                const score = (matchLength * 10) - (distance * 0.2);
                 
-                let isValidMatch = false;
-
-                if (matchLen >= 3) {
-                    isValidMatch = true;
-                } else if (matchLen === 2) {
-                    isValidMatch = true;
-                } else if (matchLen === 1) {
-                    if (isImmediateNext) {
-                        isValidMatch = true;
-                    } else if (!isShortWord && !isCommon) {
-                        isValidMatch = true;
-                    }
-                }
-
-                if (isValidMatch) {
-                    if (matchLen > maxMatchLength) {
-                        maxMatchLength = matchLen;
-                        bestMatchStartIndex = s;
-                    }
+                if (score > bestMatch.score) {
+                    bestMatch = {
+                        endIndex: s + matchLength,
+                        score: score
+                    };
                 }
             }
         }
       }
 
-      if (bestMatchStartIndex !== -1) {
-         const newIndex = bestMatchStartIndex + maxMatchLength;
-         if (newIndex > bestNewIndex) {
-             bestNewIndex = newIndex;
-         }
-      }
-
-      // Apply update
-      if (bestNewIndex > currentIndex) {
+      // Only update if we found a valid match that moves us forward
+      if (bestMatch.endIndex > currentIndex) {
          return currentWords.map((w, i) => ({
            ...w,
-           isSpoken: i < bestNewIndex
+           isSpoken: i < bestMatch.endIndex
          }));
       }
 
@@ -340,7 +340,7 @@ const App: React.FC = () => {
             <div className="text-center mb-10 z-10">
                 <h1 className="text-5xl md:text-6xl font-bold mb-3 tracking-tight">
                     <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
-                        Karaoke Teleprompter
+                        Adaptive Teleprompter
                     </span>
                 </h1>
                 <p className="text-gray-400 text-lg font-light tracking-wide">
@@ -431,7 +431,7 @@ const App: React.FC = () => {
             >
                 <MonitorPlay size={20} className="text-white" />
             </button>
-            <h1 className="text-white font-bold text-lg tracking-tight">Karaoke Teleprompter</h1>
+            <h1 className="text-white font-bold text-lg tracking-tight">Adaptive Teleprompter</h1>
         </div>
 
         <div className="flex items-center gap-4">
