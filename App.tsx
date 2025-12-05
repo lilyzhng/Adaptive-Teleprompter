@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings, Download, Type, MonitorPlay, Sparkles, ArrowRight, X, Loader2, Award, Lightbulb, Volume2, StopCircle, Mic, Ear, Upload, MessageSquare, AlertCircle, Check, ChevronLeft, FileText, ArrowRightCircle } from 'lucide-react';
+import { Settings, Download, Type, MonitorPlay, Sparkles, ArrowRight, X, Loader2, Award, Lightbulb, Volume2, StopCircle, Mic, Ear, Upload, MessageSquare, AlertCircle, Check, ChevronLeft, FileText, ArrowRightCircle, Video, FileAudio, Home } from 'lucide-react';
 import { GoogleGenAI, Type as GeminiType, Modality } from '@google/genai';
 import { ScriptWord, PerformanceReport, DetailedFeedback } from './types';
 import Teleprompter from './components/Teleprompter';
@@ -176,8 +176,14 @@ const isMatch = (scriptWord: string, spokenWord: string): boolean => {
     return dist <= Math.floor(len * 0.4); 
 };
 
+// Application Views
+type AppView = 'home' | 'teleprompter' | 'analysis';
+
 const App: React.FC = () => {
-  // App State
+  // Navigation State
+  const [currentView, setCurrentView] = useState<AppView>('home');
+  
+  // App State (Teleprompter)
   const [hasStarted, setHasStarted] = useState<boolean>(false);
   
   // Media State
@@ -202,11 +208,9 @@ const App: React.FC = () => {
   const [performanceReport, setPerformanceReport] = useState<PerformanceReport | null>(null);
   const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
   const [showReport, setShowReport] = useState(false);
-  const [showTranscription, setShowTranscription] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
   
   // External Upload State
-  const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadContext, setUploadContext] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadedAudioBase64, setUploadedAudioBase64] = useState<string | null>(null);
@@ -232,6 +236,9 @@ const App: React.FC = () => {
   // -- Initialization --
 
   const initCamera = useCallback(async () => {
+    // Only initialize camera if we are in teleprompter mode
+    if (currentView !== 'teleprompter') return;
+
     setPermissionError(null);
     try {
       if (streamRef.current) {
@@ -257,7 +264,7 @@ const App: React.FC = () => {
          setPermissionError("Unable to access media devices: " + (err.message || "Unknown error"));
       }
     }
-  }, []);
+  }, [currentView]);
 
   useEffect(() => {
     initCamera();
@@ -272,7 +279,34 @@ const App: React.FC = () => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
-  }, [hasStarted, stream, videoRef.current]);
+  }, [hasStarted, stream, videoRef.current, currentView]);
+
+  // Cleanup when leaving view
+  useEffect(() => {
+      if (currentView !== 'teleprompter') {
+           if (streamRef.current) {
+               streamRef.current.getTracks().forEach(track => track.stop());
+               setStream(null);
+               streamRef.current = null;
+           }
+           setHasStarted(false);
+      }
+  }, [currentView]);
+
+  // -- Navigation --
+
+  const goHome = () => {
+      if (confirm("Are you sure you want to go back? Current progress will be lost.")) {
+          setCurrentView('home');
+          // Reset states
+          setPerformanceReport(null);
+          setTranscriptionResult(null);
+          setUploadedAudioBase64(null);
+          setScriptText("");
+          setScriptWords([]);
+          stopTTS();
+      }
+  };
 
   // -- Script Processing --
 
@@ -326,29 +360,17 @@ const App: React.FC = () => {
     if (incomingWords.length === 0) return;
 
     setScriptWords(currentWords => {
-      // Start searching from the first unspoken word
       let startIndex = currentWords.findIndex(w => !w.isSpoken);
       if (startIndex === -1) startIndex = currentWords.length;
 
-      // Lookahead window to find matches
       const LOOKAHEAD = 50; 
       const searchEnd = Math.min(currentWords.length, startIndex + LOOKAHEAD);
       
-      // We search for a "strong match" between the script and the input.
-      // A strong match is defined as:
-      // 1. A sequence of 2+ words matching.
-      // 2. OR a single very long word (5+ chars) matching.
-      
       let bestMatchIndex = -1;
 
-      // Iterate through the script window
       for (let s = startIndex; s < searchEnd; s++) {
-        // For each script word, try to find it in the incoming words
         for (let i = 0; i < incomingWords.length; i++) {
            if (isMatch(currentWords[s].cleanWord, incomingWords[i])) {
-               // Found a potential anchor point at script[s] and input[i]
-               
-               // Check for sequence match (look ahead in both script and input)
                let matchLen = 1;
                let scriptOffset = 1;
                let inputOffset = 1;
@@ -367,19 +389,12 @@ const App: React.FC = () => {
                }
 
                const wordLen = currentWords[s].cleanWord.length;
-               
-               // Decision Logic: Is this a valid sync point?
                const isStrongMatch = (matchLen >= 2) || (matchLen === 1 && wordLen >= 5);
                
                if (isStrongMatch) {
-                   // If we skipped words in the script to get here, ensure we aren't skipping too many without good reason
                    const skippedCount = s - startIndex;
-                   
-                   // If it's a very strong match (3+ words), we allow larger skips.
-                   // If it's a weak match (1 word), we only allow small skips.
                    if (skippedCount === 0 || (skippedCount < 5 && matchLen >= 2) || (skippedCount < 2 && wordLen >= 5)) {
                         bestMatchIndex = s + matchLen;
-                        // Break out of both loops
                         i = incomingWords.length; 
                         s = searchEnd; 
                    }
@@ -399,7 +414,6 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // Sync active index
   useEffect(() => {
     const idx = scriptWords.findIndex(w => !w.isSpoken);
     if (idx !== -1) {
@@ -490,7 +504,6 @@ const App: React.FC = () => {
     setPerformanceReport(null);
     setShowReport(false);
 
-    // 1. Start Audio/Video Recording
     let options = { mimeType: 'video/mp4' };
     if (!MediaRecorder.isTypeSupported('video/mp4')) {
         options = { mimeType: 'video/webm;codecs=vp9' };
@@ -505,16 +518,13 @@ const App: React.FC = () => {
     recorder.start(1000);
     mediaRecorderRef.current = recorder;
 
-    // 2. Start Speech Recognition (Web Speech API for low latency)
     if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = 'en-US'; // Default to US English
+        recognition.lang = 'en-US'; 
 
         recognition.onresult = (event: any) => {
-            // We take the latest result, whether interim or final, and try to match it.
-            // Our robust matcher handles the history overlapping.
             const resultIndex = event.resultIndex;
             const transcript = event.results[resultIndex][0].transcript;
             handleTranscription(transcript);
@@ -621,7 +631,6 @@ Provide a JSON report with:
       if (!selectedFile) return;
 
       setIsAnalyzing(true);
-      setShowUploadModal(false); // Close modal
       try {
           // Convert file to base64
           const base64Audio = await new Promise<string>((resolve, reject) => {
@@ -634,10 +643,7 @@ Provide a JSON report with:
               reader.readAsDataURL(selectedFile);
           });
           
-          // Store raw audio for stage 2
           setUploadedAudioBase64(base64Audio);
-
-          // Call analysis with user provided context
           await analyzeStage1_Transcribe(base64Audio, selectedFile.type, uploadContext);
       } catch (error) {
           console.error("Upload analysis failed:", error);
@@ -645,11 +651,6 @@ Provide a JSON report with:
           setIsAnalyzing(false);
           setAnalysisStep('idle');
       }
-      
-      // Cleanup
-      setSelectedFile(null);
-      setUploadContext("");
-      if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const analyzeStage1_Transcribe = async (base64Audio: string, mimeType: string, context: string) => {
@@ -657,7 +658,6 @@ Provide a JSON report with:
           const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
           const audioMime = mimeType.includes('m4a') ? 'audio/mp4' : mimeType;
 
-          // STEP 1: Forensic Transcription using Gemini Flash
           setAnalysisStep('transcribing');
           
           const transcriptResponse = await ai.models.generateContent({
@@ -682,10 +682,7 @@ Provide a JSON report with:
           });
           
           const transcript = transcriptResponse.text;
-          console.log("Stage 1 Transcription complete");
-          
           setTranscriptionResult(transcript);
-          setShowTranscription(true);
       } catch (error) {
           console.error("Transcription stage failed:", error);
           throw error;
@@ -700,11 +697,9 @@ Provide a JSON report with:
       
       setIsAnalyzing(true);
       setAnalysisStep('analyzing');
-      setShowTranscription(false); // Close transcription view
 
       try {
           const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-          // M4A is typically audio/mp4 for Gemini
           const audioMime = selectedFile?.type.includes('m4a') ? 'audio/mp4' : (selectedFile?.type || 'audio/mp3');
 
           const response = await ai.models.generateContent({
@@ -777,7 +772,6 @@ Provide a JSON report with:
       } catch (error) {
           console.error("Stage 2 Coach analysis failed:", error);
           alert("Coach analysis failed. Please try again.");
-          setShowTranscription(true); // Re-open transcript so user isn't lost
       } finally {
           setIsAnalyzing(false);
           setAnalysisStep('idle');
@@ -845,346 +839,296 @@ Provide a JSON report with:
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // -- Render --
-  
-  if (!hasStarted) {
-      return (
-        <div className="min-h-screen bg-cream text-charcoal flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
-            <div className="absolute top-0 left-0 w-full h-full opacity-40 pointer-events-none" 
-                 style={{ backgroundImage: 'radial-gradient(circle at 15% 15%, #F0EBE0 0%, transparent 20%), radial-gradient(circle at 85% 85%, #E8E0D0 0%, transparent 20%)' }}>
-            </div>
+  // -- Render Components --
 
-            <div className="text-center mb-12 z-10 max-w-2xl mx-auto">
-                <div className="mb-4 inline-block px-4 py-1.5 rounded-full border border-gold/40 text-gold text-[10px] font-bold tracking-[0.2em] uppercase bg-white/50 backdrop-blur-sm">
-                    AI For Video Creation
-                </div>
-                <h1 className="text-6xl md:text-7xl font-serif mb-6 tracking-tight text-charcoal">
-                    Adaptive Teleprompter
-                </h1>
-                <p className="text-gray-500 text-lg font-serif italic max-w-lg mx-auto leading-relaxed">
-                    A responsive teleprompter that listens to your voice and scrolls in real-time.
-                </p>
-            </div>
+  const renderHome = () => (
+      <div className="min-h-screen bg-cream text-charcoal flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
+          <div className="absolute top-0 left-0 w-full h-full opacity-40 pointer-events-none" 
+               style={{ backgroundImage: 'radial-gradient(circle at 15% 15%, #F0EBE0 0%, transparent 20%), radial-gradient(circle at 85% 85%, #E8E0D0 0%, transparent 20%)' }}>
+          </div>
 
-            <div className="w-full max-w-3xl z-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
-                <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] border border-[#EBE8E0] overflow-hidden">
-                    <div className="px-8 py-5 border-b border-[#F0F0F0] flex justify-between items-center bg-white">
-                        <div className="flex items-center gap-3">
-                             <div className="w-1.5 h-1.5 rounded-full bg-gold"></div>
-                             <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Script Editor</span>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <button 
-                                onClick={generateAndPlayTTS}
-                                disabled={isGeneratingTTS || !scriptText}
-                                className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider transition-colors ${isPlayingTTS ? 'text-red-500 animate-pulse' : 'text-gold hover:text-charcoal'}`}
-                            >
-                                {isGeneratingTTS ? <Loader2 size={14} className="animate-spin" /> : isPlayingTTS ? <><StopCircle size={14} /><span>Stop Audio</span></> : <><Volume2 size={14} /><span>Listen to AI</span></>}
-                            </button>
-                            <div className="h-4 w-px bg-gray-200"></div>
-                            <button onClick={handleClearScript} className="text-xs font-medium text-gray-400 hover:text-red-500 transition-colors">Clear</button>
-                        </div>
-                    </div>
-                    <div className="p-2 bg-white">
-                        <textarea
-                            className="w-full h-80 bg-white text-charcoal p-6 outline-none resize-none text-xl leading-relaxed font-light placeholder-gray-300 font-serif"
-                            placeholder="Paste your script here..."
-                            value={scriptText}
-                            onChange={handleScriptChange}
-                        />
-                    </div>
-                    <div className="bg-[#FAF9F6] px-8 py-4 border-t border-[#F0F0F0] flex justify-between text-xs text-gray-400 font-medium tracking-wide">
-                        <span>{scriptWords.length} words</span>
-                        <span>~{Math.ceil(scriptWords.length / 2.5)}s estimated</span>
-                    </div>
-                </div>
+          <div className="text-center mb-16 z-10 max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-700">
+              <div className="mb-4 inline-block px-4 py-1.5 rounded-full border border-gold/40 text-gold text-[10px] font-bold tracking-[0.2em] uppercase bg-white/50 backdrop-blur-sm">
+                  AI-Powered Communications
+              </div>
+              <h1 className="text-6xl md:text-8xl font-serif mb-6 tracking-tight text-charcoal">
+                  Interview Coach
+              </h1>
+              <p className="text-gray-500 text-xl font-serif italic max-w-lg mx-auto leading-relaxed">
+                  Master your delivery with adaptive teleprompting and multi-modal behavioral analysis.
+              </p>
+          </div>
 
-                <div className="mt-10 flex flex-col items-center gap-6">
-                    <button
-                        onClick={() => setHasStarted(true)}
-                        disabled={scriptWords.length === 0}
-                        className={`group px-10 py-4 rounded-full font-medium text-lg flex items-center gap-3 transition-all transform duration-300 ${scriptWords.length > 0 ? 'bg-charcoal text-white hover:bg-black hover:-translate-y-1 shadow-lg shadow-black/10' : 'bg-[#E0E0E0] text-gray-400 cursor-not-allowed'}`}
-                    >
-                        <span>Start Session</span>
-                        <ArrowRight size={18} className={`transition-transform duration-300 ${scriptWords.length > 0 ? 'group-hover:translate-x-1' : ''}`} />
+          <div className="grid md:grid-cols-2 gap-8 z-10 w-full max-w-4xl">
+              <button onClick={() => { setCurrentView('teleprompter'); setHasStarted(false); }} className="group bg-white p-10 rounded-3xl shadow-xl hover:shadow-2xl transition-all border border-[#EBE8E0] hover:border-gold/30 text-left relative overflow-hidden">
+                   <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                       <Video size={100} className="text-charcoal" />
+                   </div>
+                   <div className="w-16 h-16 rounded-2xl bg-charcoal text-white flex items-center justify-center mb-6 shadow-lg group-hover:scale-110 transition-transform duration-300">
+                       <Video size={32} />
+                   </div>
+                   <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">Teleprompter Practice</h3>
+                   <p className="text-gray-500 leading-relaxed mb-6">Record yourself with a smart, listening script. Get real-time scrolling and instant feedback.</p>
+                   <div className="flex items-center gap-2 text-gold font-bold text-sm tracking-widest uppercase">
+                       Start Session <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                   </div>
+              </button>
+
+              <button onClick={() => { setCurrentView('analysis'); }} className="group bg-white p-10 rounded-3xl shadow-xl hover:shadow-2xl transition-all border border-[#EBE8E0] hover:border-gold/30 text-left relative overflow-hidden">
+                   <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                       <FileAudio size={100} className="text-gold" />
+                   </div>
+                   <div className="w-16 h-16 rounded-2xl bg-cream border border-gold/20 text-gold flex items-center justify-center mb-6 shadow-lg group-hover:scale-110 transition-transform duration-300">
+                       <Upload size={32} />
+                   </div>
+                   <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">Forensic Analysis</h3>
+                   <p className="text-gray-500 leading-relaxed mb-6">Upload an existing interview recording. Get a forensic transcript and executive coaching critique.</p>
+                   <div className="flex items-center gap-2 text-gold font-bold text-sm tracking-widest uppercase">
+                       Upload Audio <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                   </div>
+              </button>
+          </div>
+      </div>
+  );
+
+  const renderAnalysisView = () => (
+      <div className="min-h-screen bg-cream text-charcoal flex flex-col font-sans overflow-hidden">
+           {/* Header */}
+           <div className="h-20 bg-white border-b border-[#E6E6E6] flex items-center justify-between px-8 z-50 shrink-0">
+                <div className="flex items-center gap-4">
+                    <button onClick={goHome} className="w-10 h-10 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors">
+                        <Home size={18} className="text-gray-500" />
                     </button>
-
-                    <div className="relative">
-                        <input 
-                            type="file" 
-                            accept="audio/*" 
-                            className="hidden" 
-                            ref={fileInputRef} 
-                            onChange={handleFileSelect} 
-                        />
-                        <button 
-                            onClick={() => setShowUploadModal(true)}
-                            disabled={isAnalyzing}
-                            className="flex items-center gap-2 text-xs font-bold text-gold uppercase tracking-widest hover:text-charcoal transition-colors border-b border-transparent hover:border-charcoal pb-1"
-                        >
-                            {isAnalyzing ? (
-                                <><Loader2 size={14} className="animate-spin" /> 
-                                  {analysisStep === 'transcribing' ? 'Transcribing Audio...' : 'Coach is Analyzing...'}
-                                </>
-                            ) : (
-                                <><Upload size={14} /> Analyze External Audio (M4A/MP3)</>
-                            )}
-                        </button>
+                    <div>
+                        <div className="text-[10px] font-bold text-gold uppercase tracking-widest">Interview Coach</div>
+                        <h2 className="text-xl font-serif font-bold text-charcoal">Forensic Analysis</h2>
                     </div>
                 </div>
+           </div>
 
-                <div className="mt-8 text-center h-8">
-                    {!stream && !permissionError && (
-                         <div className="flex items-center justify-center gap-2 text-gray-400 text-sm animate-pulse">
-                            <Sparkles size={14} className="text-gold" />
-                            <span>Initializing Camera...</span>
-                         </div>
-                    )}
-                    {permissionError && (
-                        <div className="flex flex-col items-center gap-2">
-                             <span className="text-red-500 text-sm bg-red-50 px-3 py-1 rounded-full border border-red-100">{permissionError}</span>
-                             <button onClick={initCamera} className="text-xs font-bold text-charcoal underline hover:text-gold transition-colors">Try Again</button>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Upload Modal */}
-            {showUploadModal && (
-                <div className="absolute inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-300">
-                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-[#EBE8E0]">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-2xl font-serif font-bold text-charcoal">Analyze External Audio</h3>
-                            <button onClick={() => setShowUploadModal(false)} className="text-gray-400 hover:text-charcoal"><X size={24} /></button>
+           {/* Main Content Area */}
+           <div className="flex-1 overflow-y-auto p-8 relative">
+                {!transcriptionResult && !performanceReport ? (
+                    // Upload State
+                    <div className="max-w-2xl mx-auto mt-12 bg-white rounded-3xl shadow-xl border border-[#EBE8E0] p-10 animate-in fade-in slide-in-from-bottom-4">
+                        <div className="mb-8">
+                             <h3 className="text-3xl font-serif font-bold text-charcoal mb-2">Upload Interview</h3>
+                             <p className="text-gray-500">Supported formats: MP3, WAV, M4A.</p>
                         </div>
                         
-                        <div className="space-y-6">
+                        <div className="space-y-8">
                             <div>
-                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Context & Roles</label>
+                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Context & Roles</label>
                                 <textarea 
-                                    className="w-full h-32 bg-[#FAF9F6] border border-[#E6E6E6] rounded-xl p-4 text-sm text-charcoal outline-none focus:border-gold resize-none"
+                                    className="w-full h-32 bg-[#FAF9F6] border border-[#E6E6E6] rounded-xl p-4 text-sm text-charcoal outline-none focus:border-gold resize-none focus:ring-1 focus:ring-gold/50"
                                     placeholder="e.g., 'This is an interview between recruiter (Joe) and me (Lily). Ignore Joe's speech and focus on my answers.'"
                                     value={uploadContext}
                                     onChange={(e) => setUploadContext(e.target.value)}
                                 />
-                                <p className="text-[10px] text-gray-400 mt-2">Providing context helps the AI identify who to analyze.</p>
                             </div>
 
-                            <div className="space-y-4">
-                                <div 
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors ${selectedFile ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:bg-gray-50'}`}
-                                >
-                                    {selectedFile ? (
-                                        <>
-                                            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600 mb-1">
-                                                <Check size={20} />
-                                            </div>
-                                            <span className="text-sm font-bold text-green-800 text-center px-4 break-all">{selectedFile.name}</span>
-                                            <span className="text-xs text-green-600">Click to change</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 mb-1">
-                                                <Upload size={20} />
-                                            </div>
-                                            <span className="text-sm font-medium text-gray-500">Click to select audio file</span>
-                                        </>
-                                    )}
-                                </div>
-
-                                <button 
-                                    onClick={startExternalAnalysis}
-                                    disabled={!selectedFile}
-                                    className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${!selectedFile ? 'bg-gray-100 text-gray-300 cursor-not-allowed' : 'bg-charcoal text-white hover:bg-black shadow-lg hover:shadow-xl hover:-translate-y-0.5'}`}
-                                >
-                                    {isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                                    <span>Start Forensic Transcription</span>
-                                </button>
+                            <div 
+                                onClick={() => fileInputRef.current?.click()}
+                                className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all ${selectedFile ? 'border-green-400 bg-green-50/50' : 'border-gray-200 hover:border-gold/50 hover:bg-gray-50'}`}
+                            >
+                                <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
+                                {selectedFile ? (
+                                    <>
+                                        <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center text-green-600 shadow-sm">
+                                            <Check size={28} />
+                                        </div>
+                                        <div className="text-center">
+                                            <span className="block text-lg font-bold text-green-800 break-all">{selectedFile.name}</span>
+                                            <span className="text-xs text-green-600 uppercase tracking-widest font-bold mt-1">Ready to Analyze</span>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="w-14 h-14 rounded-full bg-[#FAF9F6] border border-[#E6E6E6] flex items-center justify-center text-gray-400 mb-1">
+                                            <Upload size={24} />
+                                        </div>
+                                        <div className="text-center">
+                                            <span className="block text-lg font-medium text-charcoal">Click to browse</span>
+                                            <span className="text-sm text-gray-400">or drag and drop audio file here</span>
+                                        </div>
+                                    </>
+                                )}
                             </div>
+
+                            <button 
+                                onClick={startExternalAnalysis}
+                                disabled={!selectedFile || isAnalyzing}
+                                className={`w-full py-5 rounded-xl font-bold flex items-center justify-center gap-3 transition-all text-lg shadow-lg ${!selectedFile || isAnalyzing ? 'bg-gray-100 text-gray-300 cursor-not-allowed' : 'bg-charcoal text-white hover:bg-black hover:shadow-xl hover:-translate-y-0.5'}`}
+                            >
+                                {isAnalyzing ? <Loader2 size={20} className="animate-spin" /> : <Sparkles size={20} />}
+                                <span>{isAnalyzing ? 'Analyzing Audio...' : 'Start Forensic Transcription'}</span>
+                            </button>
                         </div>
                     </div>
-                </div>
-            )}
-
-            {/* Stage 1: Transcription Result View (Full Screen) */}
-            {showTranscription && transcriptionResult && (
-                 <div className="fixed inset-0 z-[100] bg-cream flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-hidden">
-                     <div className="px-8 py-6 border-b border-[#E6E6E6] bg-white flex justify-between items-center shrink-0 shadow-sm z-10">
-                         <div className="flex items-center gap-4">
-                             <div className="w-10 h-10 rounded-full bg-cream border border-[#EBE8E0] flex items-center justify-center">
-                                 <FileText size={20} className="text-gold" />
-                             </div>
+                ) : transcriptionResult && !performanceReport ? (
+                    // Transcription View (Stage 1)
+                     <div className="max-w-4xl mx-auto h-full flex flex-col">
+                        <div className="bg-white rounded-t-3xl border border-[#EBE8E0] border-b-0 p-8 flex justify-between items-center shadow-sm z-10">
                              <div>
-                                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Stage 1: The Scribe</div>
-                                 <h2 className="text-xl font-serif font-bold text-charcoal">Forensic Transcript</h2>
+                                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Stage 1: The Scribe</div>
+                                 <h2 className="text-2xl font-serif font-bold text-charcoal">Forensic Transcript</h2>
                              </div>
-                         </div>
-                         <div className="flex items-center gap-3">
-                             <button onClick={downloadTranscript} className="px-6 py-2.5 bg-white text-charcoal border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors flex items-center gap-2 shadow-sm">
-                                <Download size={16} />
-                                Download Transcript
-                             </button>
-                             <button onClick={() => setShowTranscription(false)} className="px-6 py-2.5 bg-gray-200 text-charcoal rounded-full text-sm font-bold hover:bg-gray-300 transition-colors">Close</button>
-                         </div>
-                     </div>
-                     
-                     <div className="flex-1 overflow-y-auto bg-cream p-8 md:p-12">
-                         <div className="max-w-4xl mx-auto">
-                            <div className="bg-white rounded-3xl p-8 md:p-12 shadow-[0_2px_20px_-5px_rgba(0,0,0,0.05)] border border-[#EBE8E0] space-y-8">
-                                <div className="prose prose-lg max-w-none font-serif text-charcoal leading-relaxed whitespace-pre-wrap">
-                                    {transcriptionResult}
-                                </div>
-                            </div>
-                            
-                            <div className="mt-8 flex justify-center">
-                                <button 
-                                    onClick={proceedToCoaching}
-                                    className="px-8 py-4 bg-charcoal text-white rounded-full text-lg font-bold hover:bg-black transition-all shadow-lg hover:shadow-xl hover:-translate-y-1 flex items-center gap-3"
-                                >
-                                    <span>Proceed to Stage 2: Coach Analysis</span>
-                                    <ArrowRightCircle size={20} />
+                             <div className="flex gap-3">
+                                <button onClick={downloadTranscript} className="px-5 py-2 bg-white border border-gray-200 rounded-full text-xs font-bold hover:bg-gray-50 transition-colors flex items-center gap-2">
+                                    <Download size={14} /> Download
                                 </button>
+                                <button onClick={proceedToCoaching} className="px-6 py-2 bg-charcoal text-white rounded-full text-xs font-bold hover:bg-black transition-colors flex items-center gap-2 shadow-lg hover:shadow-xl">
+                                    {isAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <ArrowRightCircle size={14} />}
+                                    Proceed to Stage 2: Coach
+                                </button>
+                             </div>
+                        </div>
+                        <div className="flex-1 bg-white border-x border-[#EBE8E0] p-10 overflow-y-auto">
+                            <div className="prose prose-lg max-w-none font-serif text-charcoal leading-relaxed whitespace-pre-wrap">
+                                {transcriptionResult}
                             </div>
-                         </div>
+                        </div>
+                        <div className="h-8 bg-white border border-t-0 border-[#EBE8E0] rounded-b-3xl mb-8"></div>
+                     </div>
+                ) : (
+                    // Performance Report (Stage 2)
+                    <div ref={reportRef} className="max-w-5xl mx-auto bg-white rounded-3xl shadow-xl border border-[#EBE8E0] overflow-hidden">
+                         {/* This re-uses the full report UI structure but inline */}
+                         {renderPerformanceReportContent()}
+                    </div>
+                )}
+           </div>
+      </div>
+  );
+
+  const renderPerformanceReportContent = () => (
+     <div className="flex flex-col h-full">
+         <div className="p-10 border-b border-[#F0F0F0] flex justify-between items-start bg-gradient-to-br from-white to-[#FAF9F6]">
+             <div>
+                 <div className="flex items-center gap-2 mb-2">
+                     <Award size={18} className="text-gold" />
+                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Stage 2: The Coach</span>
+                 </div>
+                 <h2 className="text-4xl font-serif font-bold text-charcoal">Performance Report</h2>
+             </div>
+             <div className="flex gap-3" data-html2canvas-ignore>
+                 <button onClick={downloadReportAsImage} className="px-5 py-2.5 bg-white border border-gray-200 rounded-full text-xs font-bold hover:bg-gray-50 transition-colors flex items-center gap-2">
+                    <Download size={14} /> Export Image
+                 </button>
+                 <button onClick={goHome} className="px-5 py-2.5 bg-charcoal text-white rounded-full text-xs font-bold hover:bg-black transition-colors">Done</button>
+             </div>
+         </div>
+         
+         <div className="p-10 space-y-10">
+             <div className="flex flex-col md:flex-row gap-10 items-center md:items-start">
+                 <div className="relative w-32 h-32 shrink-0 flex items-center justify-center">
+                     <div className="absolute inset-0 rounded-full border-8 border-[#F5F5F0]"></div>
+                     <div 
+                         className="absolute inset-0 rounded-full border-8 border-gold border-t-transparent transform -rotate-45" 
+                         style={{ 
+                             clipPath: `polygon(0 0, 100% 0, 100% ${performanceReport!.rating}%, 0 ${performanceReport!.rating}%)`
+                         }}
+                     ></div>
+                     <div className="text-center">
+                         <span className="block text-4xl font-serif font-bold text-charcoal">{performanceReport!.rating}</span>
+                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1 block">Score</span>
                      </div>
                  </div>
-            )}
+                 <div className="flex-1 space-y-3 text-center md:text-left">
+                     <h3 className="text-2xl font-serif font-bold text-charcoal">Executive Summary</h3>
+                     <div className="text-gray-600 leading-relaxed whitespace-pre-wrap">{performanceReport!.summary}</div>
+                 </div>
+             </div>
 
-            {/* Performance Report - Full Screen Overlay */}
-            {showReport && performanceReport && (
-                <div className="fixed inset-0 z-[100] bg-cream flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-hidden">
-                     <div className="px-8 py-6 border-b border-[#E6E6E6] bg-white flex justify-between items-center shrink-0 shadow-sm z-10">
-                         <div className="flex items-center gap-4">
-                             <div className="w-10 h-10 rounded-full bg-cream border border-[#EBE8E0] flex items-center justify-center">
-                                 <Award size={20} className="text-gold" />
+             {performanceReport!.detailedFeedback ? (
+                 <div className="space-y-6">
+                     <h3 className="flex items-center gap-3 text-sm font-bold text-charcoal uppercase tracking-widest border-b border-gray-100 pb-2">
+                         <Lightbulb size={18} className="text-gold" />
+                         Detailed Analysis
+                     </h3>
+                     <div className="grid grid-cols-1 gap-6">
+                         {performanceReport!.detailedFeedback.map((item, i) => (
+                             <div key={i} className="bg-white rounded-2xl p-8 border border-[#EBE8E0] shadow-sm">
+                                 <div className="flex items-center gap-3 mb-4">
+                                     <span className="w-1.5 h-1.5 rounded-full bg-gold"></span>
+                                     <div className="text-gold text-xs font-bold uppercase tracking-widest font-serif">{item.category}</div>
+                                 </div>
+                                 
+                                 <div className="mb-6">
+                                     <span className="font-bold text-charcoal text-base block mb-2">The Issue</span>
+                                     <div className="text-gray-600 leading-relaxed whitespace-pre-wrap">{item.issue}</div>
+                                 </div>
+
+                                 <div className="grid md:grid-cols-2 gap-6">
+                                     <div className="bg-[#FAF9F6] p-5 rounded-xl border-l-4 border-gray-300">
+                                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Specific Instance</span>
+                                         <div className="text-sm text-gray-600 italic leading-relaxed whitespace-pre-wrap">"{item.instance}"</div>
+                                     </div>
+
+                                     <div className="bg-[#F0FDF4] p-5 rounded-xl border-l-4 border-green-400">
+                                         <span className="text-xs font-bold text-green-700 uppercase tracking-wider block mb-2">Improvement Strategy</span>
+                                         <div className="text-sm text-green-800 font-medium leading-relaxed whitespace-pre-wrap">{item.improvement}</div>
+                                     </div>
+                                 </div>
                              </div>
-                             <div>
-                                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">AI Analysis</div>
-                                 <h2 className="text-xl font-serif font-bold text-charcoal">Performance Report</h2>
-                             </div>
-                         </div>
-                         <div className="flex items-center gap-3">
-                             <button onClick={downloadReportAsImage} className="px-6 py-2.5 bg-white text-charcoal border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors flex items-center gap-2 shadow-sm">
-                                <Download size={16} />
-                                Export as Image
-                             </button>
-                             <button onClick={() => setShowReport(false)} className="px-6 py-2.5 bg-charcoal text-white rounded-full text-sm font-bold hover:bg-black transition-colors shadow-md">Close</button>
-                         </div>
+                         ))}
                      </div>
-
-                     <div ref={reportRef} className="flex-1 overflow-y-auto bg-cream p-8 md:p-12">
-                         <div className="max-w-5xl mx-auto space-y-12">
-                             {/* Summary Section */}
-                             <div className="bg-white rounded-3xl p-8 md:p-10 shadow-[0_2px_20px_-5px_rgba(0,0,0,0.05)] border border-[#EBE8E0] flex flex-col md:flex-row gap-10 items-center md:items-start">
-                                 <div className="relative w-40 h-40 shrink-0 flex items-center justify-center">
-                                     <div className="absolute inset-0 rounded-full border-8 border-[#F5F5F0]"></div>
-                                     <div 
-                                         className="absolute inset-0 rounded-full border-8 border-gold border-t-transparent transform -rotate-45" 
-                                         style={{ 
-                                             clipPath: `polygon(0 0, 100% 0, 100% ${performanceReport.rating}%, 0 ${performanceReport.rating}%)`,
-                                             transition: 'clip-path 1s ease-out'
-                                         }}
-                                     ></div>
-                                     <div className="text-center">
-                                         <span className="block text-5xl font-serif font-bold text-charcoal">{performanceReport.rating}</span>
-                                         <span className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1 block">Score</span>
-                                     </div>
-                                 </div>
-                                 <div className="flex-1 space-y-4 text-center md:text-left">
-                                     <h3 className="text-2xl font-serif font-bold text-charcoal">Executive Summary</h3>
-                                     <div className="text-lg text-gray-600 leading-relaxed whitespace-pre-wrap">{performanceReport.summary}</div>
-                                 </div>
+                 </div>
+             ) : (
+                 <div className="bg-white rounded-3xl p-8 border border-[#EBE8E0] shadow-sm">
+                     <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-6"><Lightbulb size={16} className="text-gold" />Key Suggestions</h3>
+                     <div className="space-y-4">
+                         {performanceReport!.suggestions.map((tip, i) => (
+                             <div key={i} className="flex gap-5 p-5 rounded-xl bg-[#FAF9F6] border border-[#F0F0F0]">
+                                 <div className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center text-sm font-serif font-bold text-gold shrink-0 shadow-sm">{i + 1}</div>
+                                 <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{tip}</p>
                              </div>
-
-                             {/* Detailed Feedback Grid */}
-                             {performanceReport.detailedFeedback ? (
-                                 <div className="space-y-6">
-                                     <h3 className="flex items-center gap-3 text-sm font-bold text-charcoal uppercase tracking-widest">
-                                         <Lightbulb size={18} className="text-gold" />
-                                         Detailed Analysis
-                                     </h3>
-                                     <div className="grid grid-cols-1 gap-6">
-                                         {performanceReport.detailedFeedback.map((item, i) => (
-                                             <div key={i} className="bg-white rounded-2xl p-8 border border-[#EBE8E0] shadow-sm hover:shadow-md transition-shadow">
-                                                 <div className="flex items-center gap-3 mb-4">
-                                                     <span className="w-1.5 h-1.5 rounded-full bg-gold"></span>
-                                                     <div className="text-gold text-xs font-bold uppercase tracking-widest font-serif">{item.category}</div>
-                                                 </div>
-                                                 
-                                                 <div className="mb-6">
-                                                     <span className="font-bold text-charcoal text-base block mb-2">The Issue</span>
-                                                     <div className="text-gray-600 leading-relaxed whitespace-pre-wrap">{item.issue}</div>
-                                                 </div>
-
-                                                 <div className="grid md:grid-cols-2 gap-6">
-                                                     <div className="bg-[#FAF9F6] p-5 rounded-xl border-l-4 border-gray-300">
-                                                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Specific Instance</span>
-                                                         <div className="text-sm text-gray-600 italic leading-relaxed whitespace-pre-wrap">"{item.instance}"</div>
-                                                     </div>
-
-                                                     <div className="bg-[#F0FDF4] p-5 rounded-xl border-l-4 border-green-400">
-                                                         <span className="text-xs font-bold text-green-700 uppercase tracking-wider block mb-2">Improvement Strategy</span>
-                                                         <div className="text-sm text-green-800 font-medium leading-relaxed whitespace-pre-wrap">{item.improvement}</div>
-                                                     </div>
-                                                 </div>
-                                             </div>
-                                         ))}
-                                     </div>
-                                 </div>
-                             ) : (
-                                 <div className="bg-white rounded-3xl p-8 border border-[#EBE8E0] shadow-sm">
-                                     <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-6"><Lightbulb size={16} className="text-gold" />Key Suggestions</h3>
-                                     <div className="space-y-4">
-                                         {performanceReport.suggestions.map((tip, i) => (
-                                             <div key={i} className="flex gap-5 p-5 rounded-xl bg-[#FAF9F6] border border-[#F0F0F0]">
-                                                 <div className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center text-sm font-serif font-bold text-gold shrink-0 shadow-sm">{i + 1}</div>
-                                                 <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{tip}</p>
-                                             </div>
-                                         ))}
-                                     </div>
-                                 </div>
-                             )}
-
-                            {performanceReport.pronunciationFeedback && performanceReport.pronunciationFeedback.length > 0 && (
-                                 <div className="bg-white rounded-3xl p-8 border border-[#EBE8E0] shadow-sm">
-                                    <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-6">
-                                        <Ear size={16} className="text-gold" />
-                                        Pronunciation & Clarity
-                                    </h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {performanceReport.pronunciationFeedback.map((item, i) => (
-                                            <div key={i} className="flex items-start gap-3 p-4 bg-[#FAF9F6] rounded-xl border border-[#F0F0F0]">
-                                                <AlertCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
-                                                <span className="text-gray-700 text-sm whitespace-pre-wrap">{item}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                 </div>
-                            )}
-                         </div>
+                         ))}
                      </div>
-                </div>
-            )}
-        </div>
-      );
-  }
+                 </div>
+             )}
 
-  return (
-    <div className="relative h-screen w-screen bg-cream overflow-hidden flex flex-col font-sans">
+            {performanceReport!.pronunciationFeedback && performanceReport!.pronunciationFeedback.length > 0 && (
+                 <div className="bg-white rounded-3xl p-8 border border-[#EBE8E0] shadow-sm">
+                    <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-6">
+                        <Ear size={16} className="text-gold" />
+                        Pronunciation & Clarity
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {performanceReport!.pronunciationFeedback.map((item, i) => (
+                            <div key={i} className="flex items-start gap-3 p-4 bg-[#FAF9F6] rounded-xl border border-[#F0F0F0]">
+                                <AlertCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                                <span className="text-gray-700 text-sm whitespace-pre-wrap">{item}</span>
+                            </div>
+                        ))}
+                    </div>
+                 </div>
+            )}
+         </div>
+     </div>
+  );
+
+  const renderTeleprompterView = () => (
+      <div className="relative h-screen w-screen bg-cream overflow-hidden flex flex-col font-sans">
       <div className="h-16 bg-cream/90 backdrop-blur-md border-b border-[#E6E6E6] flex items-center justify-between px-8 z-50 shrink-0">
         <div className="flex items-center gap-4">
-            <button onClick={() => setHasStarted(false)} className="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors group">
-                <MonitorPlay size={16} className="text-gray-600 group-hover:text-charcoal" />
+            <button onClick={goHome} className="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors">
+                <Home size={16} className="text-gray-500" />
             </button>
-            <h1 className="text-charcoal font-serif font-bold text-xl tracking-tight">Adaptive Teleprompter</h1>
+            <h1 className="text-charcoal font-serif font-bold text-xl tracking-tight">Teleprompter Practice</h1>
         </div>
 
         <div className="flex items-center gap-6">
-             <div className="flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase bg-green-50 text-green-700 border border-green-200">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                Ready
-             </div>
+             {!hasStarted ? (
+                <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                    Setup Mode
+                </div>
+             ) : (
+                <div className="flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase bg-green-50 text-green-700 border border-green-200">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                    Ready
+                </div>
+             )}
              {recordingState === 'recording' && (
                  <div className="flex items-center gap-2 text-red-500 font-bold text-[10px] tracking-widest uppercase animate-pulse">
                      <div className="w-2 h-2 bg-red-500 rounded-full"></div>
@@ -1203,188 +1147,215 @@ Provide a JSON report with:
         ) : (
           <>
             <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover transform scale-x-[-1]" />
-            {!isEditMode && !showReport && <Teleprompter words={scriptWords} activeWordIndex={activeWordIndex} fontSize={fontSize} opacity={opacity} />}
             
-            {isEditMode && (
-               <div className="absolute inset-0 z-30 bg-cream/95 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
-                  <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl border border-[#E6E6E6] flex flex-col h-[80vh]">
-                    <div className="flex justify-between items-center px-8 py-6 border-b border-[#F0F0F0]">
-                        <h2 className="text-2xl font-serif font-bold text-charcoal">Edit Script</h2>
-                        <div className="flex items-center gap-6">
-                            <button 
-                                onClick={generateAndPlayTTS}
-                                disabled={isGeneratingTTS || !scriptText}
-                                className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider transition-colors ${isPlayingTTS ? 'text-red-500 animate-pulse' : 'text-gold hover:text-charcoal'}`}
-                            >
-                                {isGeneratingTTS ? <Loader2 size={14} className="animate-spin" /> : isPlayingTTS ? <><StopCircle size={14} /><span>Stop Audio</span></> : <><Volume2 size={14} /><span>Listen to AI</span></>}
-                            </button>
-                            <div className="h-6 w-px bg-gray-200"></div>
-                            <button onClick={() => setIsEditMode(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><X size={24} className="text-gray-500" /></button>
+            {!hasStarted ? (
+                 // Start Screen (Setup)
+                 <div className="absolute inset-0 z-40 bg-cream/80 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-in fade-in duration-500">
+                      <div className="w-full max-w-3xl">
+                        <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] border border-[#EBE8E0] overflow-hidden">
+                            <div className="px-8 py-5 border-b border-[#F0F0F0] flex justify-between items-center bg-white">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-gold"></div>
+                                    <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Script Editor</span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                    <button 
+                                        onClick={generateAndPlayTTS}
+                                        disabled={isGeneratingTTS || !scriptText}
+                                        className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider transition-colors ${isPlayingTTS ? 'text-red-500 animate-pulse' : 'text-gold hover:text-charcoal'}`}
+                                    >
+                                        {isGeneratingTTS ? <Loader2 size={14} className="animate-spin" /> : isPlayingTTS ? <><StopCircle size={14} /><span>Stop Audio</span></> : <><Volume2 size={14} /><span>Listen to AI</span></>}
+                                    </button>
+                                    <div className="h-4 w-px bg-gray-200"></div>
+                                    <button onClick={handleClearScript} className="text-xs font-medium text-gray-400 hover:text-red-500 transition-colors">Clear</button>
+                                </div>
+                            </div>
+                            <div className="p-2 bg-white">
+                                <textarea
+                                    className="w-full h-80 bg-white text-charcoal p-6 outline-none resize-none text-xl leading-relaxed font-light placeholder-gray-300 font-serif"
+                                    placeholder="Paste your script here..."
+                                    value={scriptText}
+                                    onChange={handleScriptChange}
+                                />
+                            </div>
+                            <div className="bg-[#FAF9F6] px-8 py-4 border-t border-[#F0F0F0] flex justify-between text-xs text-gray-400 font-medium tracking-wide">
+                                <span>{scriptWords.length} words</span>
+                                <span>~{Math.ceil(scriptWords.length / 2.5)}s estimated</span>
+                            </div>
                         </div>
-                    </div>
-                    <div className="flex-1 p-4 bg-white overflow-hidden">
-                         <textarea className="w-full h-full bg-transparent text-charcoal p-4 outline-none resize-none text-2xl leading-relaxed font-serif placeholder-gray-300" placeholder="Type your script..." value={scriptText} onChange={handleScriptChange} />
-                    </div>
-                    <div className="px-8 py-5 border-t border-[#F0F0F0] bg-[#FAF9F6] flex justify-between items-center rounded-b-2xl">
-                         <button onClick={handleClearScript} className="text-sm font-medium text-red-500 hover:text-red-600">Clear All</button>
-                         <div className="flex items-center gap-6">
-                            <span className="text-xs text-gray-400 font-mono">{scriptWords.length} words</span>
-                            <button onClick={() => setIsEditMode(false)} className="px-6 py-2 bg-charcoal text-white rounded-full text-sm font-bold hover:bg-black transition-colors">Done</button>
-                         </div>
-                    </div>
-                  </div>
-               </div>
-            )}
 
-            {showReport && performanceReport && (
-                <div className="absolute inset-0 z-40 bg-cream/95 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-500">
-                    {/* Render basic report for internal mode here, external uses the full screen one above in !hasStarted check */}
-                    {/* Actually, let's unify them. If we are here, it's post-recording internal analysis */}
-                     <div ref={reportRef} className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-[#EBE8E0] overflow-hidden flex flex-col max-h-[90vh]">
-                         <div className="p-8 border-b border-[#F0F0F0] flex justify-between items-start bg-gradient-to-br from-white to-[#FAF9F6]">
-                             <div>
-                                 <div className="flex items-center gap-2 mb-2">
-                                     <Sparkles size={16} className="text-gold" />
-                                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">AI Analysis</span>
-                                 </div>
-                                 <h2 className="text-3xl font-serif text-charcoal">Performance Report</h2>
-                             </div>
-                             <button onClick={() => setShowReport(false)} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-charcoal transition-colors"><X size={24} /></button>
-                         </div>
-                         <div className="p-8 overflow-y-auto custom-scrollbar space-y-8">
-                             <div className="flex items-center gap-6">
-                                 <div className="relative w-24 h-24 flex items-center justify-center">
-                                     <div className="absolute inset-0 rounded-full border-4 border-[#F0F0F0]"></div>
-                                     <div className="absolute inset-0 rounded-full border-4 border-gold border-t-transparent transform -rotate-45" style={{ clipPath: `polygon(0 0, 100% 0, 100% ${performanceReport.rating}%, 0 ${performanceReport.rating}%)`}}></div>
-                                     <span className="text-3xl font-serif font-bold text-charcoal">{performanceReport.rating}</span>
-                                 </div>
-                                 <div>
-                                     <div className="text-sm text-gray-500 font-medium mb-1">Overall Score</div>
-                                     <div className="text-lg text-charcoal leading-snug whitespace-pre-wrap">{performanceReport.summary}</div>
-                                 </div>
-                             </div>
-
-                             {performanceReport.detailedFeedback ? (
-                                 <div>
-                                     <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-4"><Lightbulb size={16} className="text-gold" />Detailed Feedback</h3>
-                                     <div className="space-y-4">
-                                         {performanceReport.detailedFeedback.map((item, i) => (
-                                             <div key={i} className="p-5 rounded-2xl bg-[#FAF9F6] border border-[#F0F0F0] space-y-3">
-                                                 <div className="text-gold text-xs font-bold uppercase tracking-wider font-serif">{item.category}</div>
-                                                 
-                                                 <div>
-                                                     <span className="font-bold text-charcoal text-sm">The Issue: </span>
-                                                     <span className="text-gray-600 text-sm whitespace-pre-wrap">{item.issue}</span>
-                                                 </div>
-
-                                                 <div className="pl-3 border-l-2 border-gray-200 py-1">
-                                                     <span className="text-xs text-gray-400 italic whitespace-pre-wrap">Specific Instance: "{item.instance}"</span>
-                                                 </div>
-
-                                                 <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-sm text-green-800">
-                                                     <span className="font-bold">Improvement: </span>
-                                                     <span className="whitespace-pre-wrap">{item.improvement}</span>
-                                                 </div>
-                                             </div>
-                                         ))}
+                        <div className="mt-10 flex flex-col items-center gap-6">
+                            <button
+                                onClick={() => setHasStarted(true)}
+                                disabled={scriptWords.length === 0}
+                                className={`group px-10 py-4 rounded-full font-medium text-lg flex items-center gap-3 transition-all transform duration-300 ${scriptWords.length > 0 ? 'bg-charcoal text-white hover:bg-black hover:-translate-y-1 shadow-lg shadow-black/10' : 'bg-[#E0E0E0] text-gray-400 cursor-not-allowed'}`}
+                            >
+                                <span>Start Session</span>
+                                <ArrowRight size={18} className={`transition-transform duration-300 ${scriptWords.length > 0 ? 'group-hover:translate-x-1' : ''}`} />
+                            </button>
+                            <div className="h-8">
+                                {!stream && (
+                                     <div className="flex items-center justify-center gap-2 text-gray-400 text-sm animate-pulse">
+                                        <Sparkles size={14} className="text-gold" />
+                                        <span>Initializing Camera...</span>
                                      </div>
+                                )}
+                            </div>
+                        </div>
+                      </div>
+                 </div>
+            ) : (
+                <>
+                    {/* Active Teleprompter */}
+                    {!isEditMode && !showReport && <Teleprompter words={scriptWords} activeWordIndex={activeWordIndex} fontSize={fontSize} opacity={opacity} />}
+                    
+                    {/* Edit Mode Overlay */}
+                    {isEditMode && (
+                       <div className="absolute inset-0 z-30 bg-cream/95 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+                          <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl border border-[#E6E6E6] flex flex-col h-[80vh]">
+                            <div className="flex justify-between items-center px-8 py-6 border-b border-[#F0F0F0]">
+                                <h2 className="text-2xl font-serif font-bold text-charcoal">Edit Script</h2>
+                                <div className="flex items-center gap-6">
+                                    <button 
+                                        onClick={generateAndPlayTTS}
+                                        disabled={isGeneratingTTS || !scriptText}
+                                        className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider transition-colors ${isPlayingTTS ? 'text-red-500 animate-pulse' : 'text-gold hover:text-charcoal'}`}
+                                    >
+                                        {isGeneratingTTS ? <Loader2 size={14} className="animate-spin" /> : isPlayingTTS ? <><StopCircle size={14} /><span>Stop Audio</span></> : <><Volume2 size={14} /><span>Listen to AI</span></>}
+                                    </button>
+                                    <div className="h-6 w-px bg-gray-200"></div>
+                                    <button onClick={() => setIsEditMode(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><X size={24} className="text-gray-500" /></button>
+                                </div>
+                            </div>
+                            <div className="flex-1 p-4 bg-white overflow-hidden">
+                                 <textarea className="w-full h-full bg-transparent text-charcoal p-4 outline-none resize-none text-2xl leading-relaxed font-serif placeholder-gray-300" placeholder="Type your script..." value={scriptText} onChange={handleScriptChange} />
+                            </div>
+                            <div className="px-8 py-5 border-t border-[#F0F0F0] bg-[#FAF9F6] flex justify-between items-center rounded-b-2xl">
+                                 <button onClick={handleClearScript} className="text-sm font-medium text-red-500 hover:text-red-600">Clear All</button>
+                                 <div className="flex items-center gap-6">
+                                    <span className="text-xs text-gray-400 font-mono">{scriptWords.length} words</span>
+                                    <button onClick={() => setIsEditMode(false)} className="px-6 py-2 bg-charcoal text-white rounded-full text-sm font-bold hover:bg-black transition-colors">Done</button>
                                  </div>
-                             ) : (
-                                 <div>
-                                     <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-4"><Lightbulb size={16} className="text-gold" />Key Suggestions</h3>
-                                     <div className="space-y-3">
-                                         {performanceReport.suggestions.map((tip, i) => (
-                                             <div key={i} className="flex gap-4 p-4 rounded-xl bg-[#FAF9F6] border border-[#F0F0F0]">
-                                                 <div className="w-6 h-6 rounded-full bg-white border border-gray-200 flex items-center justify-center text-xs font-serif font-bold text-gold shrink-0">{i + 1}</div>
-                                                 <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-wrap">{tip}</p>
-                                             </div>
-                                         ))}
-                                     </div>
-                                 </div>
-                             )}
+                            </div>
+                          </div>
+                       </div>
+                    )}
 
-                            {performanceReport.pronunciationFeedback && performanceReport.pronunciationFeedback.length > 0 && (
-                                 <div>
-                                    <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-4">
-                                        <Ear size={16} className="text-gold" />
-                                        Pronunciation & Clarity
-                                    </h3>
-                                    <div className="bg-[#FAF9F6] border border-[#F0F0F0] rounded-xl p-5">
-                                        <ul className="space-y-2">
-                                            {performanceReport.pronunciationFeedback.map((item, i) => (
-                                                <li key={i} className="flex items-start gap-3 text-sm text-gray-600">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0"></span>
-                                                    <span>{item}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
+                    {/* Report Overlay for Teleprompter Session */}
+                    {showReport && performanceReport && (
+                        <div className="absolute inset-0 z-40 bg-cream/95 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-500">
+                             <div ref={reportRef} className="w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-[#EBE8E0] overflow-hidden flex flex-col max-h-[90vh]">
+                                 <div className="p-6 border-b border-[#F0F0F0] flex justify-between items-center bg-gradient-to-br from-white to-[#FAF9F6]">
+                                    <h2 className="text-2xl font-serif font-bold text-charcoal">Performance Report</h2>
+                                     <button onClick={() => setShowReport(false)} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-charcoal transition-colors"><X size={24} /></button>
+                                 </div>
+                                 <div className="flex-1 overflow-y-auto">
+                                    {/* Reuse the render logic but wrapped differently for this modal context */}
+                                    <div className="p-8">
+                                        <div className="flex items-center gap-6 mb-8">
+                                            <div className="relative w-24 h-24 shrink-0 flex items-center justify-center">
+                                                <div className="absolute inset-0 rounded-full border-4 border-[#F0F0F0]"></div>
+                                                <div className="absolute inset-0 rounded-full border-4 border-gold border-t-transparent transform -rotate-45" style={{ clipPath: `polygon(0 0, 100% 0, 100% ${performanceReport.rating}%, 0 ${performanceReport.rating}%)`}}></div>
+                                                <span className="text-3xl font-serif font-bold text-charcoal">{performanceReport.rating}</span>
+                                            </div>
+                                            <div>
+                                                <div className="text-sm text-gray-500 font-medium mb-1">Summary</div>
+                                                <div className="text-lg text-charcoal leading-snug whitespace-pre-wrap">{performanceReport.summary}</div>
+                                            </div>
+                                        </div>
+                                        {/* Brief Suggestions for Teleprompter Mode */}
+                                        <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-4"><Lightbulb size={16} className="text-gold" />Suggestions</h3>
+                                        <div className="space-y-3 mb-6">
+                                             {performanceReport.suggestions.map((tip, i) => (
+                                                 <div key={i} className="flex gap-4 p-4 rounded-xl bg-[#FAF9F6] border border-[#F0F0F0]">
+                                                     <div className="w-6 h-6 rounded-full bg-white border border-gray-200 flex items-center justify-center text-xs font-serif font-bold text-gold shrink-0">{i + 1}</div>
+                                                     <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-wrap">{tip}</p>
+                                                 </div>
+                                             ))}
+                                        </div>
+                                        {performanceReport.pronunciationFeedback && (
+                                            <div>
+                                                <h3 className="flex items-center gap-2 text-sm font-bold text-charcoal uppercase tracking-widest mb-4"><Ear size={16} className="text-gold" />Pronunciation</h3>
+                                                <div className="bg-[#FAF9F6] p-4 rounded-xl border border-[#F0F0F0]">
+                                                    {performanceReport.pronunciationFeedback.length > 0 ? (
+                                                        <ul className="space-y-2">{performanceReport.pronunciationFeedback.map((s, i) => <li key={i} className="text-sm text-gray-600 list-disc ml-4">{s}</li>)}</ul>
+                                                    ) : <span className="text-sm text-gray-400 italic">No issues detected.</span>}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                  </div>
-                            )}
-
-                         </div>
-                         <div className="p-6 border-t border-[#F0F0F0] bg-[#FAF9F6] flex justify-end gap-3" data-html2canvas-ignore>
-                             <button onClick={downloadReportAsImage} className="px-6 py-2 bg-white text-charcoal border border-gray-300 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors flex items-center gap-2">
-                                <Download size={14} />
-                                Download
-                             </button>
-                             <button onClick={() => setShowReport(false)} className="px-6 py-2 bg-charcoal text-white rounded-full text-sm font-bold hover:bg-black transition-colors">Close Report</button>
-                         </div>
-                     </div>
-                </div>
+                                 <div className="p-4 bg-[#FAF9F6] border-t border-[#F0F0F0] flex justify-end gap-3" data-html2canvas-ignore>
+                                     <button onClick={downloadReportAsImage} className="px-5 py-2 bg-white text-charcoal border border-gray-300 rounded-full text-xs font-bold hover:bg-gray-50 flex items-center gap-2"><Download size={14} /> Download</button>
+                                     <button onClick={() => setShowReport(false)} className="px-5 py-2 bg-charcoal text-white rounded-full text-xs font-bold hover:bg-black">Close</button>
+                                 </div>
+                             </div>
+                        </div>
+                    )}
+                </>
             )}
           </>
         )}
       </div>
 
-      <div className="h-24 bg-cream/90 backdrop-blur-md border-t border-[#E6E6E6] flex items-center justify-between px-10 z-50 shrink-0">
-         <div className="flex items-center gap-4 w-1/3">
-            <div className="relative group">
-                <button onClick={() => setShowSettings(!showSettings)} className={`p-3 rounded-full transition-all duration-300 ${showSettings ? 'bg-charcoal text-white' : 'text-gray-500 hover:bg-gray-200 hover:text-charcoal'}`} title="Settings"><Settings size={20} /></button>
-                {showSettings && (
-                    <div className="absolute bottom-full left-0 mb-6 w-72 bg-white rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-[#EBE8E0] p-6 animate-in slide-in-from-bottom-2">
-                        <h3 className="text-[10px] font-bold text-gold mb-6 uppercase tracking-widest">Display Settings</h3>
-                        <div className="space-y-8">
-                            <div>
-                                <div className="flex justify-between text-xs font-medium text-gray-500 mb-3"><span>Text Size</span><span>{fontSize}px</span></div>
-                                <input type="range" min="24" max="96" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-charcoal" />
-                            </div>
-                            <div>
-                                <div className="flex justify-between text-xs font-medium text-gray-500 mb-3"><span>Future Text Visibility</span><span>{Math.round(opacity * 100)}%</span></div>
-                                <input type="range" min="0" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(parseFloat(e.target.value))} className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-charcoal" />
+      {hasStarted && (
+          <div className="h-24 bg-cream/90 backdrop-blur-md border-t border-[#E6E6E6] flex items-center justify-between px-10 z-50 shrink-0">
+             <div className="flex items-center gap-4 w-1/3">
+                <div className="relative group">
+                    <button onClick={() => setShowSettings(!showSettings)} className={`p-3 rounded-full transition-all duration-300 ${showSettings ? 'bg-charcoal text-white' : 'text-gray-500 hover:bg-gray-200 hover:text-charcoal'}`} title="Settings"><Settings size={20} /></button>
+                    {showSettings && (
+                        <div className="absolute bottom-full left-0 mb-6 w-72 bg-white rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-[#EBE8E0] p-6 animate-in slide-in-from-bottom-2">
+                            <h3 className="text-[10px] font-bold text-gold mb-6 uppercase tracking-widest">Display Settings</h3>
+                            <div className="space-y-8">
+                                <div>
+                                    <div className="flex justify-between text-xs font-medium text-gray-500 mb-3"><span>Text Size</span><span>{fontSize}px</span></div>
+                                    <input type="range" min="24" max="96" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-charcoal" />
+                                </div>
+                                <div>
+                                    <div className="flex justify-between text-xs font-medium text-gray-500 mb-3"><span>Future Text Visibility</span><span>{Math.round(opacity * 100)}%</span></div>
+                                    <input type="range" min="0" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(parseFloat(e.target.value))} className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-charcoal" />
+                                </div>
                             </div>
                         </div>
-                    </div>
-                )}
-            </div>
-            <button onClick={() => setIsEditMode(true)} className="p-3 text-gray-500 hover:bg-gray-200 hover:text-charcoal rounded-full transition-all" title="Edit Script"><Type size={20} /></button>
-         </div>
+                    )}
+                </div>
+                <button onClick={() => setIsEditMode(true)} className="p-3 text-gray-500 hover:bg-gray-200 hover:text-charcoal rounded-full transition-all" title="Edit Script"><Type size={20} /></button>
+             </div>
 
-         <div className="flex items-center justify-center w-1/3">
-             {recordingState === 'idle' ? (
-                <button onClick={startRecording} disabled={scriptWords.length === 0} className={`w-16 h-16 rounded-full flex items-center justify-center border-[3px] transition-all duration-300 ${scriptWords.length > 0 ? 'border-charcoal bg-transparent hover:bg-charcoal group' : 'border-gray-300 bg-gray-100 cursor-not-allowed opacity-50'}`} title={scriptWords.length === 0 ? "Add script to record" : "Start Recording"}>
-                     <div className={`w-6 h-6 rounded-full transition-colors duration-300 ${scriptWords.length > 0 ? 'bg-red-500 group-hover:bg-red-500' : 'bg-gray-300'}`}></div>
-                </button>
-             ) : (
-                <button onClick={stopRecording} className="w-16 h-16 rounded-full flex items-center justify-center border-[3px] border-red-500 bg-transparent hover:bg-red-50 transition-all group">
-                    <div className="w-6 h-6 bg-red-500 rounded-sm group-hover:scale-90 transition-transform"></div>
-                </button>
-             )}
-         </div>
-
-         <div className="flex items-center justify-end gap-3 w-1/3 text-sm">
-             {recordingState !== 'idle' && <div className="font-mono text-charcoal font-medium text-lg tracking-widest">{formatTime(recordingDuration)}</div>}
-             {recordingState === 'idle' && recordedChunks.length > 0 && (
-                <>
-                    <button onClick={performanceReport ? () => setShowReport(true) : analyzePerformance} disabled={isAnalyzing} className={`flex items-center gap-2 px-5 py-3 rounded-full text-xs font-bold tracking-wider uppercase transition-all shadow-md ${isAnalyzing ? 'bg-gray-100 text-gray-400 cursor-wait' : 'bg-white text-gold border border-gold/30 hover:bg-gold hover:text-white'}`}>
-                        {isAnalyzing ? <><Loader2 size={16} className="animate-spin" /><span>Analyzing...</span></> : <><Sparkles size={16} /><span>{performanceReport ? 'View Report' : 'Analyze'}</span></>}
+             <div className="flex items-center justify-center w-1/3">
+                 {recordingState === 'idle' ? (
+                    <button onClick={startRecording} disabled={scriptWords.length === 0} className={`w-16 h-16 rounded-full flex items-center justify-center border-[3px] transition-all duration-300 ${scriptWords.length > 0 ? 'border-charcoal bg-transparent hover:bg-charcoal group' : 'border-gray-300 bg-gray-100 cursor-not-allowed opacity-50'}`} title={scriptWords.length === 0 ? "Add script to record" : "Start Recording"}>
+                         <div className={`w-6 h-6 rounded-full transition-colors duration-300 ${scriptWords.length > 0 ? 'bg-red-500 group-hover:bg-red-500' : 'bg-gray-300'}`}></div>
                     </button>
-                    <button onClick={downloadVideo} className="flex items-center gap-2 px-5 py-3 bg-charcoal text-white rounded-full text-xs font-bold tracking-wider uppercase hover:bg-black transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"><Download size={16} /><span>Save Video</span></button>
-                </>
-             )}
-         </div>
+                 ) : (
+                    <button onClick={stopRecording} className="w-16 h-16 rounded-full flex items-center justify-center border-[3px] border-red-500 bg-transparent hover:bg-red-50 transition-all group">
+                        <div className="w-6 h-6 bg-red-500 rounded-sm group-hover:scale-90 transition-transform"></div>
+                    </button>
+                 )}
+             </div>
+
+             <div className="flex items-center justify-end gap-3 w-1/3 text-sm">
+                 {recordingState !== 'idle' && <div className="font-mono text-charcoal font-medium text-lg tracking-widest">{formatTime(recordingDuration)}</div>}
+                 {recordingState === 'idle' && recordedChunks.length > 0 && (
+                    <>
+                        <button onClick={performanceReport ? () => setShowReport(true) : analyzePerformance} disabled={isAnalyzing} className={`flex items-center gap-2 px-5 py-3 rounded-full text-xs font-bold tracking-wider uppercase transition-all shadow-md ${isAnalyzing ? 'bg-gray-100 text-gray-400 cursor-wait' : 'bg-white text-gold border border-gold/30 hover:bg-gold hover:text-white'}`}>
+                            {isAnalyzing ? <><Loader2 size={16} className="animate-spin" /><span>Analyzing...</span></> : <><Sparkles size={16} /><span>{performanceReport ? 'View Report' : 'Analyze'}</span></>}
+                        </button>
+                        <button onClick={downloadVideo} className="flex items-center gap-2 px-5 py-3 bg-charcoal text-white rounded-full text-xs font-bold tracking-wider uppercase hover:bg-black transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"><Download size={16} /><span>Save Video</span></button>
+                    </>
+                 )}
+             </div>
+          </div>
+      )}
       </div>
-    </div>
+  );
+
+  return (
+    <>
+        {currentView === 'home' && renderHome()}
+        {currentView === 'analysis' && renderAnalysisView()}
+        {currentView === 'teleprompter' && renderTeleprompterView()}
+    </>
   );
 };
 

@@ -1,6 +1,6 @@
 {
-  "name": "Adaptive Teleprompter",
-  "description": "An intelligent teleprompter that listens and judges.",
+  "name": "Interview Coach",
+  "description": "An AI-powered coach for interview practice and audio analysis.",
   "requestFramePermissions": [
     "camera",
     "microphone"
