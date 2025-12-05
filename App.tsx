@@ -198,6 +198,7 @@ const App: React.FC = () => {
   
   // AI Analysis State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisStep, setAnalysisStep] = useState<'idle' | 'transcribing' | 'analyzing'>('idle');
   const [performanceReport, setPerformanceReport] = useState<PerformanceReport | null>(null);
   const [showReport, setShowReport] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -555,6 +556,7 @@ const App: React.FC = () => {
   const analyzePerformance = async () => {
       if (recordedChunks.length === 0) return;
       setIsAnalyzing(true);
+      setAnalysisStep('analyzing');
       try {
           const videoBlob = new Blob(recordedChunks, { type: recordedChunks[0].type });
           const base64Audio = await extractAudioFromVideo(videoBlob);
@@ -599,6 +601,7 @@ Provide a JSON report with:
           alert("Analysis failed. Try again.");
       } finally {
           setIsAnalyzing(false);
+          setAnalysisStep('idle');
       }
   };
 
@@ -634,6 +637,7 @@ Provide a JSON report with:
           console.error("Upload analysis failed:", error);
           alert("Failed to analyze uploaded audio. Please try a valid audio file (mp3, wav, m4a).");
           setIsAnalyzing(false);
+          setAnalysisStep('idle');
       }
       
       // Cleanup
@@ -645,25 +649,58 @@ Provide a JSON report with:
   const analyzeUploadedAudio = async (base64Audio: string, mimeType: string, context: string) => {
       try {
           const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-          // Using gemini-3-pro-preview for complex reasoning and detailed feedback
+          const audioMime = mimeType.includes('m4a') ? 'audio/mp4' : mimeType;
+
+          // STEP 1: Transcribe the audio first using Gemini Flash
+          setAnalysisStep('transcribing');
+          
+          const transcriptResponse = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: {
+                  parts: [
+                      { inlineData: { mimeType: audioMime, data: base64Audio } },
+                      { text: `Transcribe the following audio recording verbatim. 
+                      Based on the user's description below, identify the speakers if possible (e.g., 'Recruiter', 'Candidate').
+                      
+                      User Context: "${context}"
+                      
+                      Output only the transcription text, clearly labeled.` }
+                  ]
+              }
+          });
+          
+          const transcript = transcriptResponse.text;
+          console.log("Transcription complete:", transcript.substring(0, 100) + "...");
+
+          // STEP 2: Analyze using Gemini 3 Pro with BOTH Audio and Transcription
+          setAnalysisStep('analyzing');
+
           const response = await ai.models.generateContent({
               model: 'gemini-3-pro-preview',
               contents: {
                   parts: [
-                      { inlineData: { mimeType: mimeType.includes('m4a') ? 'audio/mp4' : mimeType, data: base64Audio } },
+                      // We provide the audio again so the model can hear tone/pace/pitch
+                      { inlineData: { mimeType: audioMime, data: base64Audio } },
                       { text: `You are an expert speech coach analyzing an audio recording of an interview or speech. 
                       
                       CONTEXT PROVIDED BY USER:
                       "${context}"
+
+                      TRANSCRIPTION OF THE AUDIO:
+                      "${transcript}"
                       
-                      Based on this context, identify the primary speaker (candidate) and the interviewer/recruiter. Focus your analysis ONLY on the primary speaker/candidate.
+                      INSTRUCTIONS:
+                      1. Use the provided Transcription to understand the exact content and context.
+                      2. Use the Audio to analyze the delivery, pace, tone, and pitch.
+                      3. Identify the primary speaker (candidate) and the interviewer/recruiter based on the context. 
+                      4. Focus your analysis ONLY on the primary speaker/candidate.
 
                       Evaluate their performance and provide VERY CONSTRUCTIVE, DETAILED feedback in the following structure:
                       
                       For each point (Pace, Voice Placement, Clarity, Pitch/Tone, Content/Impact):
                       1. Identify the Category (MUST NOT BE EMPTY).
                       2. State "The Issue" clearly (MUST NOT BE EMPTY).
-                      3. Cite a "Specific Instance" from the audio (quote what was said or describe the moment). If no specific quote is available, describe a general pattern observed. (MUST NOT BE EMPTY).
+                      3. Cite a "Specific Instance" from the audio or transcription (quote what was said or describe the moment). If no specific quote is available, describe a general pattern observed. (MUST NOT BE EMPTY).
                       4. Provide a concrete "Improvement" strategy (e.g., "Use the comma pause", "Stop, don't bridge"). (MUST NOT BE EMPTY).
 
                       Also provide an overall rating and summary.
@@ -707,6 +744,7 @@ Provide a JSON report with:
           alert("Could not analyze the audio. Ensure the file format is supported.");
       } finally {
           setIsAnalyzing(false);
+          setAnalysisStep('idle');
       }
   };
 
@@ -829,7 +867,9 @@ Provide a JSON report with:
                             className="flex items-center gap-2 text-xs font-bold text-gold uppercase tracking-widest hover:text-charcoal transition-colors border-b border-transparent hover:border-charcoal pb-1"
                         >
                             {isAnalyzing ? (
-                                <><Loader2 size={14} className="animate-spin" /> Analyzing Audio...</>
+                                <><Loader2 size={14} className="animate-spin" /> 
+                                  {analysisStep === 'transcribing' ? 'Transcribing Audio...' : 'Analyzing Tone & Pace...'}
+                                </>
                             ) : (
                                 <><Upload size={14} /> Analyze External Audio (M4A/MP3)</>
                             )}
