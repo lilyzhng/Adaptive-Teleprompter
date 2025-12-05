@@ -1,3 +1,4 @@
+
 export interface ScriptWord {
   id: string;
   word: string;
@@ -14,8 +15,17 @@ export interface TeleprompterConfig {
   scrollSpeed: number; // Manual offset if needed, though we use auto
 }
 
+export interface DetailedFeedback {
+  category: string; // e.g. "Pace (Speed & Rhythm)"
+  issue: string;    // "The Issue: ..."
+  instance: string; // "Specific Instance: ..."
+  improvement: string; // "Improvement: ..."
+}
+
 export interface PerformanceReport {
   rating: number;
   summary: string;
   suggestions: string[];
+  pronunciationFeedback: string[];
+  detailedFeedback?: DetailedFeedback[]; // New field for deep analysis
 }
