@@ -1345,7 +1345,7 @@ Provide a JSON report with:
                         <div className="grid md:grid-cols-2 gap-6">
                             <div className="bg-[#FAF9F6] p-6 rounded-xl border-l-4 border-gray-200">
                                 <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Specific Instance</h5>
-                                <p className="text-charcoal italic font-serif">"{item.instance}"</p>
+                                <p className="text-charcoal font-serif text-lg leading-relaxed">"{item.instance}"</p>
                             </div>
                             <div className="bg-green-50/50 p-6 rounded-xl border-l-4 border-green-400">
                                 <h5 className="text-[10px] font-bold text-green-600 uppercase tracking-widest mb-3 flex items-center gap-2">
