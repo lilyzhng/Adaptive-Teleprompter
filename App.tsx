@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SavedItem, SavedReport, PerformanceReport } from './types';
 import { generateId } from './utils';
 import HomeView from './views/HomeView';
@@ -15,50 +15,64 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>('home');
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('sound_check');
   
-  // Persistence State
-  const [savedItems, setSavedItems] = useState<SavedItem[]>([]);
-  const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
+  // -- Persistence State (Lazy Initialization) --
+  // We initialize state directly from localStorage to prevent data loss on initial render
+  const [savedItems, setSavedItems] = useState<SavedItem[]>(() => {
+      try {
+          const stored = localStorage.getItem('micdrop_saved_items');
+          return stored ? JSON.parse(stored) : [];
+      } catch (e) {
+          console.error("Failed to load saved items", e);
+          return [];
+      }
+  });
 
-  // Load saved data from localStorage on mount
+  const [savedReports, setSavedReports] = useState<SavedReport[]>(() => {
+      try {
+          const stored = localStorage.getItem('micdrop_saved_reports');
+          return stored ? JSON.parse(stored) : [];
+      } catch (e) {
+          console.error("Failed to load saved reports", e);
+          return [];
+      }
+  });
+
+  // -- Auto-Sync Effects --
+  // Whenever state changes, we automatically sync to localStorage.
+  // This decoupling ensures we never save "stale" data from closures.
   useEffect(() => {
-      const storedItems = localStorage.getItem('micdrop_saved_items');
-      if (storedItems) {
-          try { setSavedItems(JSON.parse(storedItems)); } catch (e) { console.error("Failed to parse saved items", e); }
-      }
-      
-      const storedReports = localStorage.getItem('micdrop_saved_reports');
-      if (storedReports) {
-          try { setSavedReports(JSON.parse(storedReports)); } catch (e) { console.error("Failed to parse saved reports", e); }
-      }
-  }, []);
+      localStorage.setItem('micdrop_saved_items', JSON.stringify(savedItems));
+  }, [savedItems]);
+
+  useEffect(() => {
+      localStorage.setItem('micdrop_saved_reports', JSON.stringify(savedReports));
+  }, [savedReports]);
+
 
   // -- Snippet Logic --
-  const toggleSaveItem = (item: Omit<SavedItem, 'id' | 'date'>) => {
-      const existingIndex = savedItems.findIndex(i => i.title === item.title && i.content === item.content);
-      let newItems: SavedItem[];
-      
-      if (existingIndex >= 0) {
-          newItems = savedItems.filter((_, idx) => idx !== existingIndex);
-      } else {
-          const newItem: SavedItem = { ...item, id: generateId(), date: new Date().toISOString() };
-          newItems = [newItem, ...savedItems];
-      }
-      setSavedItems(newItems);
-      localStorage.setItem('micdrop_saved_items', JSON.stringify(newItems));
-  };
+  // Use useCallback and functional updates (prev => ...) to ensure thread safety
+  const toggleSaveItem = useCallback((item: Omit<SavedItem, 'id' | 'date'>) => {
+      setSavedItems(prevItems => {
+          const existingIndex = prevItems.findIndex(i => i.title === item.title && i.content === item.content);
+          if (existingIndex >= 0) {
+              return prevItems.filter((_, idx) => idx !== existingIndex);
+          } else {
+              const newItem: SavedItem = { ...item, id: generateId(), date: new Date().toISOString() };
+              return [newItem, ...prevItems];
+          }
+      });
+  }, []);
   
-  const isSaved = (title: string, content: string) => {
+  const isSaved = useCallback((title: string, content: string) => {
       return savedItems.some(i => i.title === title && i.content === content);
-  };
+  }, [savedItems]);
   
-  const deleteSavedItem = (id: string) => {
-      const newItems = savedItems.filter(i => i.id !== id);
-      setSavedItems(newItems);
-      localStorage.setItem('micdrop_saved_items', JSON.stringify(newItems));
-  };
+  const deleteSavedItem = useCallback((id: string) => {
+      setSavedItems(prev => prev.filter(i => i.id !== id));
+  }, []);
 
   // -- Report Logic --
-  const saveReport = (title: string, type: 'coach' | 'rehearsal', report: PerformanceReport) => {
+  const saveReport = useCallback((title: string, type: 'coach' | 'rehearsal', report: PerformanceReport) => {
       const newReport: SavedReport = {
           id: generateId(),
           date: new Date().toISOString(),
@@ -67,32 +81,29 @@ const App: React.FC = () => {
           rating: report.rating,
           reportData: report
       };
-      const newReports = [newReport, ...savedReports];
-      setSavedReports(newReports);
-      localStorage.setItem('micdrop_saved_reports', JSON.stringify(newReports));
-  };
+      setSavedReports(prev => [newReport, ...prev]);
+  }, []);
 
-  const updateSavedReport = (id: string, updates: Partial<SavedReport>) => {
-      const newReports = savedReports.map(report => 
+  const updateSavedReport = useCallback((id: string, updates: Partial<SavedReport>) => {
+      setSavedReports(prev => prev.map(report => 
           report.id === id ? { ...report, ...updates } : report
-      );
-      setSavedReports(newReports);
-      localStorage.setItem('micdrop_saved_reports', JSON.stringify(newReports));
-  };
+      ));
+  }, []);
 
-  const deleteSavedReport = (id: string) => {
-      const newReports = savedReports.filter(r => r.id !== id);
-      setSavedReports(newReports);
-      localStorage.setItem('micdrop_saved_reports', JSON.stringify(newReports));
-  };
+  const deleteSavedReport = useCallback((id: string) => {
+      setSavedReports(prev => prev.filter(r => r.id !== id));
+  }, []);
 
+  // -- Navigation --
   const handleNavigate = (view: AppView, mode?: AnalysisMode) => {
       if (mode) setAnalysisMode(mode);
       setCurrentView(view);
   };
 
-  const goHome = (force: boolean = false) => {
+  const goHome = (force: boolean | unknown = false) => {
+      // Ensure force is a boolean because some event handlers might pass an event object
       const shouldForce = force === true;
+      
       if (!shouldForce) {
           if (!window.confirm("Are you sure you want to go back? Current progress will be lost.")) return;
       }
