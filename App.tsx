@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Settings, Download, Type, MonitorPlay, Sparkles, ArrowRight, X, Loader2, Award, Lightbulb, Volume2, StopCircle, Mic, Ear, Upload, MessageSquare, AlertCircle, Check, ChevronLeft, FileText, ArrowRightCircle, Video, FileAudio, Home, AudioLines, Flame, ScrollText, ThumbsUp, Star, PenTool, Quote, Mic2, PlayCircle, Bookmark, Trash2, Database } from 'lucide-react';
 import { GoogleGenAI, Type as GeminiType, Modality } from '@google/genai';
@@ -772,43 +771,59 @@ Provide a JSON report with:
 
   // Stage 2 Start Trigger (Coach)
   const startCoachAnalysis = async () => {
-      if (!selectedFile) return;
-
-       // Check file size
-       const MAX_SIZE = 20 * 1024 * 1024;
-       if (selectedFile.size > MAX_SIZE) {
-           alert("File is too large. Please upload an audio file smaller than 20MB.");
+       // Validation: Need at least one input
+       if (!selectedFile && !manualTranscript.trim()) {
+           alert("Please upload an audio file or paste a transcript.");
            return;
+       }
+
+       // Check file size if file exists
+       if (selectedFile) {
+           const MAX_SIZE = 20 * 1024 * 1024;
+           if (selectedFile.size > MAX_SIZE) {
+               alert("File is too large. Please upload an audio file smaller than 20MB.");
+               return;
+           }
        }
 
       setIsAnalyzing(true);
       try {
-          // Convert file to base64
-          const base64Audio = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                  const result = reader.result as string;
-                  resolve(result.split(',')[1]);
-              };
-              reader.onerror = reject;
-              reader.readAsDataURL(selectedFile);
-          });
-          
-          setUploadedAudioBase64(base64Audio);
-          const mimeType = getAudioMimeType(selectedFile);
+          let base64Audio = null;
+          let mimeType = 'audio/mp3'; // default
+
+          if (selectedFile) {
+              base64Audio = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                      const result = reader.result as string;
+                      resolve(result.split(',')[1]);
+                  };
+                  reader.onerror = reject;
+                  reader.readAsDataURL(selectedFile);
+              });
+              
+              setUploadedAudioBase64(base64Audio);
+              mimeType = getAudioMimeType(selectedFile);
+          }
 
           if (manualTranscript.trim()) {
-              // User provided transcript, skip stage 1
+              // User provided transcript.
+              // If audio exists, use it. If not, pass null.
               await analyzeStage2_Coach(base64Audio, manualTranscript, mimeType);
           } else {
-              // No transcript, run stage 1 internally then stage 2
-              await analyzeStage1_Transcribe(base64Audio, mimeType, uploadContext, true);
+              // No transcript, MUST have audio (checked at start)
+              if (base64Audio) {
+                  // run stage 1 internally then stage 2
+                  await analyzeStage1_Transcribe(base64Audio, mimeType, uploadContext, true);
+              } else {
+                  throw new Error("No input provided");
+              }
           }
 
       } catch (error) {
           console.error("Coach analysis failed:", error);
           const msg = error instanceof Error ? error.message : JSON.stringify(error);
-          alert(`Failed to analyze uploaded audio. Error: ${msg}`);
+          alert(`Failed to analyze. Error: ${msg}`);
           setIsAnalyzing(false);
           setAnalysisStep('idle');
       }
@@ -861,16 +876,34 @@ Provide a JSON report with:
       }
   };
 
-  const analyzeStage2_Coach = async (base64Audio: string, transcript: string, mimeType?: string) => {
-      if (!base64Audio || !transcript) return;
+  const analyzeStage2_Coach = async (base64Audio: string | null, transcript: string, mimeType?: string) => {
+      if (!transcript) return;
       
       setIsAnalyzing(true);
       setAnalysisStep('analyzing');
 
       try {
           const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-          // Ensure we have a mime type, default to mp3 if not passed
-          const audioMime = mimeType || 'audio/mp3';
+          
+          // Construct parts based on available input
+          const parts: any[] = [];
+          
+          if (base64Audio) {
+             const audioMime = mimeType || 'audio/mp3';
+             parts.push({ inlineData: { mimeType: audioMime, data: base64Audio } });
+          }
+
+          let promptText = `Context: ${uploadContext}\n\n`;
+          if (base64Audio) {
+              promptText += `Input 1: Attached is the original Audio.\n`;
+              promptText += `Input 2: Below is the Transcript generated from this call.\n\n${transcript}\n\n`;
+              promptText += `Task:\nBased on the Audio (for tone) and the Text (for content), analyze my performance...`;
+          } else {
+              promptText += `Input: Below is the Transcript of the interview.\n\n${transcript}\n\n`;
+              promptText += `Task:\nBased on the Text content, analyze my performance... Note: Since no audio is provided, focus primarily on content, structure, and strategy. Skip delivery/tone analysis if impossible.`;
+          }
+          
+          parts.push({ text: promptText });
 
           const response = await ai.models.generateContent({
               model: 'gemini-3-pro-preview', // Using Pro/3.0 for high-level reasoning
@@ -893,6 +926,7 @@ Provide a JSON report with:
                   - Focus on Technical Terms: Candidates often rush "Convolutional Neural Networks". They should say "Con-vo-LU-tion-al... Neu-ral... NET-works".
                   - Focus on Tone: Detect robotic delivery.
                   - Create a "Drill": Use visual cues like UPPERCASE for stress and '...' for pauses.
+                  - NOTE: If no audio file is provided, skip this section or provide general advice based on the text structure (e.g. run-on sentences).
                   
                   Output Format:
                   Provide feedback in this exact structure:
@@ -974,23 +1008,7 @@ Provide a JSON report with:
                   }
               },
               contents: {
-                  parts: [
-                      { inlineData: { mimeType: audioMime, data: base64Audio } },
-                      { text: `Context: ${uploadContext}
-                      
-                      Input 1: Attached is the original Audio.
-                      Input 2: Below is the Transcript generated from this call.
-
-                      ${transcript}
-
-                      Task:
-                      Based on the Audio (for tone) and the Text (for content), analyze my performance as a Technical Team Lead.
-                      1. Did I demonstrate technical depth AND leadership vision/empathy?
-                      2. Was my communication clear and concise?
-                      3. Identify any "anxiety" markers (rushing, fillers) and how to fix them.
-                      
-                      Note: Ignore the first few seconds of setup/silence in your audio evaluation.` }
-                  ]
+                  parts: parts
               }
           });
 
@@ -1019,21 +1037,19 @@ Provide a JSON report with:
   };
   
   const proceedToCoaching = () => {
-      if (uploadedAudioBase64 && transcriptionResult) {
-          // Trigger loading state immediately
-          setIsAnalyzing(true);
-          setAnalysisStep('analyzing');
-          
-          // Use helper to get type from file if available, otherwise assume mp3
-          const mimeType = selectedFile ? getAudioMimeType(selectedFile) : 'audio/mp3';
-          
-          // Small timeout to allow UI to update to loader before async work potentially blocks
-          setTimeout(() => {
-             analyzeStage2_Coach(uploadedAudioBase64, transcriptionResult, mimeType);
-          }, 50);
-      } else {
-          alert("Missing audio or transcript data.");
-      }
+      // Trigger loading state immediately
+      setIsAnalyzing(true);
+      setAnalysisStep('analyzing');
+      
+      // Use helper to get type from file if available, otherwise assume mp3
+      const mimeType = selectedFile ? getAudioMimeType(selectedFile) : 'audio/mp3';
+      
+      // Small timeout to allow UI to update to loader before async work potentially blocks
+      setTimeout(() => {
+         // Pass uploadedAudioBase64 which might be null if we are in text-only flow from Sound Check (unlikely path currently but robust)
+         // In current flow, Sound Check requires file, so uploadedAudioBase64 exists.
+         analyzeStage2_Coach(uploadedAudioBase64, transcriptionResult!, mimeType);
+      }, 50);
   };
 
   const downloadVideo = () => {
@@ -1176,6 +1192,40 @@ Provide a JSON report with:
                                                <h4 className="text-md font-bold text-charcoal mb-2">{item.title}</h4>
                                                <div className="bg-[#FAF9F6] p-4 rounded-xl mt-4">
                                                    <p className="text-charcoal italic font-serif text-sm">"{item.content}"</p>
+                                               </div>
+                                           </div>
+                                       ))}
+                                   </div>
+                               </div>
+                           )}
+
+                           {/* Drills Section */}
+                           {savedItems.filter(i => i.type === 'drill').length > 0 && (
+                               <div>
+                                   <div className="flex items-center gap-2 mb-6 mt-12">
+                                       <Ear className="text-charcoal" size={20} />
+                                       <h3 className="text-lg font-bold text-charcoal uppercase tracking-widest">Saved Drills</h3>
+                                   </div>
+                                   <div className="grid gap-6">
+                                       {savedItems.filter(i => i.type === 'drill').map(item => (
+                                           <div key={item.id} className="bg-white rounded-2xl p-6 shadow-sm border border-[#EBE8E0] relative group">
+                                               <button 
+                                                   onClick={() => deleteSavedItem(item.id)}
+                                                   className="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                                                   title="Remove from database"
+                                               >
+                                                   <Trash2 size={16} />
+                                               </button>
+                                               <div className="flex items-center gap-2 mb-3">
+                                                   <div className="w-6 h-6 rounded-full bg-charcoal/5 flex items-center justify-center text-charcoal">
+                                                       <Mic2 size={12} />
+                                                   </div>
+                                                   <span className="text-[10px] font-bold text-gold uppercase tracking-widest">{item.category}</span>
+                                               </div>
+                                               <h4 className="text-md font-bold text-charcoal mb-2">{item.title}</h4>
+                                               <p className="text-gray-500 italic text-sm mb-4">"{item.content}"</p>
+                                               <div className="bg-[#FAF9F6] p-4 rounded-xl border border-gold/20">
+                                                   <p className="text-charcoal font-serif text-lg tracking-wide">{item.rewrite}</p>
                                                </div>
                                            </div>
                                        ))}
@@ -1348,7 +1398,7 @@ Provide a JSON report with:
                                 )}
                             </div>
 
-                            {selectedFile && !isAnalyzing && (
+                            {(selectedFile || (analysisMode === 'coach' && manualTranscript.trim())) && !isAnalyzing && (
                                 <button 
                                     onClick={analysisMode === 'sound_check' ? startSoundCheckAnalysis : startCoachAnalysis}
                                     className="w-full py-4 bg-charcoal text-white rounded-xl font-bold hover:bg-black transition-colors shadow-lg flex items-center justify-center gap-2"
@@ -1603,33 +1653,50 @@ Provide a JSON report with:
                      <div className="bg-white rounded-3xl p-8 border border-[#EBE8E0] shadow-sm">
                          <p className="text-gray-600 mb-6">Targeted drills to shift from "Machine Gun" delivery to "Executive Presence".</p>
                          <div className="grid gap-6">
-                             {pronunciationFeedback.map((drill, i) => (
-                                 <div key={i} className="flex flex-col md:flex-row gap-6 p-6 rounded-2xl border border-gray-100 bg-[#FAF9F6]">
-                                     {/* The Issue */}
-                                     <div className="md:w-1/3">
-                                        <div className="flex items-center gap-2 mb-2 text-red-500">
-                                            <AlertCircle size={14} />
-                                            <span className="text-[10px] font-bold uppercase tracking-widest">The Trap</span>
-                                        </div>
-                                        <h5 className="font-bold text-charcoal mb-1">{drill.issue}</h5>
-                                        <p className="text-sm text-gray-500 italic mb-2">"{drill.phrase}"</p>
-                                     </div>
+                             {pronunciationFeedback.map((drill, i) => {
+                                 const saved = isSaved(drill.issue, drill.phrase);
+                                 return (
+                                     <div key={i} className="flex flex-col md:flex-row gap-6 p-6 rounded-2xl border border-gray-100 bg-[#FAF9F6] relative group">
+                                         <button 
+                                            onClick={() => toggleSaveItem({
+                                                type: 'drill',
+                                                category: 'Pronunciation',
+                                                title: drill.issue,
+                                                content: drill.phrase,
+                                                rewrite: drill.practiceDrill
+                                            })}
+                                            className={`absolute top-4 right-4 p-2 rounded-full transition-all z-10 ${saved ? 'text-gold bg-gold/10' : 'text-gray-300 hover:text-charcoal hover:bg-white'}`}
+                                            title={saved ? "Remove from database" : "Save to database"}
+                                        >
+                                            <Bookmark size={16} fill={saved ? "currentColor" : "none"} />
+                                        </button>
 
-                                     {/* The Fix */}
-                                     <div className="flex-1 bg-white p-6 rounded-xl border border-gold/20 shadow-sm">
-                                         <div className="flex items-center gap-2 mb-3 text-gold">
-                                            <Mic2 size={14} />
-                                            <span className="text-[10px] font-bold uppercase tracking-widest">The Drill</span>
-                                        </div>
-                                        <div className="font-serif text-xl text-charcoal tracking-wide mb-3 leading-relaxed">
-                                            {drill.practiceDrill}
-                                        </div>
-                                        <p className="text-xs text-gray-500 border-t border-gray-100 pt-3">
-                                            <span className="font-bold">Why:</span> {drill.reason}
-                                        </p>
+                                         {/* The Issue */}
+                                         <div className="md:w-1/3">
+                                            <div className="flex items-center gap-2 mb-2 text-red-500">
+                                                <AlertCircle size={14} />
+                                                <span className="text-[10px] font-bold uppercase tracking-widest">The Trap</span>
+                                            </div>
+                                            <h5 className="font-bold text-charcoal mb-1">{drill.issue}</h5>
+                                            <p className="text-sm text-gray-500 italic mb-2">"{drill.phrase}"</p>
+                                         </div>
+
+                                         {/* The Fix */}
+                                         <div className="flex-1 bg-white p-6 rounded-xl border border-gold/20 shadow-sm">
+                                             <div className="flex items-center gap-2 mb-3 text-gold">
+                                                <Mic2 size={14} />
+                                                <span className="text-[10px] font-bold uppercase tracking-widest">The Drill</span>
+                                            </div>
+                                            <div className="font-serif text-xl text-charcoal tracking-wide mb-3 leading-relaxed">
+                                                {drill.practiceDrill}
+                                            </div>
+                                            <p className="text-xs text-gray-500 border-t border-gray-100 pt-3">
+                                                <span className="font-bold">Why:</span> {drill.reason}
+                                            </p>
+                                         </div>
                                      </div>
-                                 </div>
-                             ))}
+                                 );
+                             })}
                          </div>
                      </div>
                 </div>
@@ -1638,211 +1705,193 @@ Provide a JSON report with:
     );
   };
 
-  const renderTeleprompterView = () => (
-      <div className="relative h-full bg-black">
-          {/* Video Layer */}
-          <video 
-            ref={videoRef} 
-            autoPlay 
-            muted 
-            playsInline
-            className="absolute inset-0 w-full h-full object-cover z-0 opacity-80" 
-          />
-          
-          {/* Teleprompter Overlay */}
-          <Teleprompter 
-            words={scriptWords} 
-            activeWordIndex={activeWordIndex}
-            fontSize={fontSize}
-            opacity={opacity}
-          />
-          
-          {/* Top Control Bar */}
-          <div className="absolute top-0 left-0 right-0 p-6 z-30 flex justify-between items-start bg-gradient-to-b from-black/80 to-transparent">
-               <div>
-                  <div className="text-[10px] font-bold text-white/60 uppercase tracking-widest mb-1">MicDrop</div>
-                  <h2 className="text-xl font-serif font-bold text-white tracking-wide">The Rehearsal</h2>
-               </div>
-               
-               <div className="flex gap-4">
-                   <button 
-                     onClick={() => setIsEditMode(true)}
-                     disabled={recordingState === 'recording'}
-                     className="px-4 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 rounded-full text-white text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                   >
-                     <FileText size={14} /> Script
-                   </button>
-                   <button 
-                     onClick={() => setShowSettings(!showSettings)}
-                     className="px-4 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 rounded-full text-white text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-2"
-                   >
-                     <Settings size={14} /> Settings
-                   </button>
-                   <button onClick={() => goHome(false)} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20">
-                       <X size={16} />
-                   </button>
-               </div>
-          </div>
-          
-          {/* Settings Panel */}
-          {showSettings && (
-             <div className="absolute top-20 right-6 w-64 bg-charcoal/90 backdrop-blur-xl border border-white/10 rounded-2xl p-6 z-40 text-white animate-in slide-in-from-top-4">
-                 <h3 className="text-xs font-bold uppercase tracking-widest mb-6 text-gold">Display Settings</h3>
-                 
-                 <div className="mb-6">
-                     <div className="flex justify-between mb-2">
-                         <span className="text-xs font-medium">Font Size</span>
-                         <span className="text-xs text-gray-400">{fontSize}px</span>
-                     </div>
-                     <input 
-                       type="range" min="20" max="80" value={fontSize} 
-                       onChange={(e) => setFontSize(Number(e.target.value))}
-                       className="w-full accent-gold h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
-                     />
+  return (
+    <div className="h-screen w-screen overflow-hidden bg-cream text-charcoal font-sans">
+      {currentView === 'home' && renderHome()}
+      {currentView === 'database' && renderDatabaseView()}
+      {currentView === 'analysis' && renderAnalysisView()}
+      
+      {currentView === 'teleprompter' && (
+        <>
+          {/* Start Screen / Setup */}
+          {!hasStarted && (
+            <div className="h-full flex flex-col p-8 max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 overflow-y-auto">
+              {/* Header */}
+              <div className="flex items-center justify-between mb-8">
+                <button onClick={() => setCurrentView('home')} className="w-10 h-10 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors">
+                    <Home size={18} className="text-gray-500" />
+                </button>
+                 <div className="text-center">
+                    <div className="text-[10px] font-bold text-gold uppercase tracking-widest">MicDrop</div>
+                    <h2 className="text-2xl font-serif font-bold text-charcoal">Rehearsal Studio</h2>
                  </div>
+                 <div className="w-10"></div>
+              </div>
 
-                 <div>
-                     <div className="flex justify-between mb-2">
-                         <span className="text-xs font-medium">Opacity</span>
-                         <span className="text-xs text-gray-400">{Math.round(opacity * 100)}%</span>
-                     </div>
-                     <input 
-                       type="range" min="0" max="1" step="0.1" value={opacity} 
-                       onChange={(e) => setOpacity(Number(e.target.value))}
-                       className="w-full accent-gold h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
-                     />
-                 </div>
-             </div>
-          )}
-
-          {/* Bottom Control Bar */}
-          <div className="absolute bottom-10 left-0 right-0 z-30 flex justify-center items-center gap-8">
-               {recordingState === 'idle' ? (
-                   <button 
-                     onClick={startRecording}
-                     className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 border-4 border-white/20 shadow-2xl flex items-center justify-center transition-all hover:scale-105 group"
-                   >
-                     <div className="w-8 h-8 rounded bg-white group-hover:rounded-sm transition-all" />
-                   </button>
-               ) : (
-                   <div className="flex items-center gap-6">
-                       <div className="px-6 py-3 bg-black/60 backdrop-blur-md rounded-full border border-white/10 text-white font-mono text-xl tabular-nums">
-                           {formatTime(recordingDuration)}
-                       </div>
-                       <button 
-                         onClick={stopRecording}
-                         className="w-20 h-20 rounded-full bg-white hover:bg-gray-200 border-4 border-white/20 shadow-2xl flex items-center justify-center transition-all hover:scale-105"
-                       >
-                         <div className="w-8 h-8 bg-red-500 rounded-sm" />
-                       </button>
-                   </div>
-               )}
-          </div>
-          
-          {/* Permission Error Overlay */}
-          {permissionError && (
-              <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-8 text-center">
-                  <div className="max-w-md">
-                      <AlertCircle size={48} className="text-red-500 mx-auto mb-4" />
-                      <h3 className="text-xl font-bold text-white mb-2">Camera Access Required</h3>
-                      <p className="text-gray-400 mb-6">{permissionError}</p>
-                      <button onClick={initCamera} className="px-6 py-3 bg-white text-black rounded-full font-bold hover:bg-gray-200">
-                          Try Again
+              {/* Editor */}
+              <div className="bg-white rounded-3xl shadow-xl border border-[#EBE8E0] overflow-hidden flex flex-col flex-1 min-h-[500px]">
+                  <div className="p-4 border-b border-[#E6E6E6] flex justify-between items-center bg-[#FAF9F6]">
+                      <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                          <FileText size={14} /> Script Editor
+                      </div>
+                      <div className="flex gap-2">
+                           <button 
+                                onClick={generateAndPlayTTS}
+                                disabled={isGeneratingTTS || !scriptText.trim()}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest border border-gray-200 hover:bg-white hover:border-gold/50 transition-all disabled:opacity-50"
+                           >
+                                {isGeneratingTTS ? <Loader2 size={12} className="animate-spin"/> : isPlayingTTS ? <StopCircle size={12}/> : <Volume2 size={12}/>}
+                                {isPlayingTTS ? 'Stop' : 'Listen'}
+                           </button>
+                           <button onClick={handleClearScript} className="text-xs font-bold text-gray-400 hover:text-red-400 uppercase tracking-widest px-3 py-1.5">Clear</button>
+                      </div>
+                  </div>
+                  <textarea
+                    className="flex-1 p-8 text-lg font-serif leading-relaxed resize-none outline-none text-charcoal placeholder:text-gray-300"
+                    placeholder="Paste your speech or interview answers here..."
+                    value={scriptText}
+                    onChange={handleScriptChange}
+                  />
+                  <div className="p-6 bg-[#FAF9F6] border-t border-[#E6E6E6] flex justify-between items-center">
+                      <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                          {scriptWords.length} words • ~{Math.ceil(scriptWords.length / 130)} min
+                      </div>
+                      <button 
+                        onClick={() => setHasStarted(true)}
+                        className="px-8 py-3 bg-charcoal text-white rounded-xl font-bold hover:bg-black transition-colors shadow-lg flex items-center gap-2"
+                      >
+                         Enter Studio <ArrowRightCircle size={18} />
                       </button>
                   </div>
               </div>
+            </div>
           )}
 
-          {/* Script Editor Modal */}
-          {isEditMode && (
-              <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-charcoal w-full max-w-2xl rounded-3xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-                      <div className="p-6 border-b border-white/10 flex justify-between items-center">
-                          <h3 className="text-white font-serif font-bold text-xl">Script Editor</h3>
-                          <div className="flex gap-2">
-                             <button onClick={generateAndPlayTTS} className="text-xs font-bold text-gold uppercase tracking-widest px-3 py-1.5 border border-gold/30 rounded-full hover:bg-gold/10 flex items-center gap-2">
-                                 {isPlayingTTS ? <StopCircle size={14} /> : <Volume2 size={14} />}
-                                 {isGeneratingTTS ? 'Generating...' : (isPlayingTTS ? 'Stop AI' : 'Listen to AI')}
-                             </button>
-                             <button onClick={handleClearScript} className="text-xs font-bold text-red-400 uppercase tracking-widest px-3 py-1.5 hover:text-red-300">Clear</button>
+          {/* Active Teleprompter View */}
+          {hasStarted && (
+            <div className="relative h-full w-full bg-black">
+              {/* Video Layer */}
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute inset-0 w-full h-full object-cover opacity-80"
+              />
+
+              {/* Permission Error Overlay */}
+              {permissionError && (
+                 <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80 p-8">
+                    <div className="bg-white rounded-2xl p-8 max-w-md text-center">
+                        <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
+                        <h3 className="text-xl font-bold text-charcoal mb-2">Camera Access Required</h3>
+                        <p className="text-gray-600 mb-6">{permissionError}</p>
+                        <button onClick={initCamera} className="px-6 py-2 bg-charcoal text-white rounded-full font-bold">Try Again</button>
+                    </div>
+                 </div>
+              )}
+              
+              {/* Top Bar */}
+              <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-30 bg-gradient-to-b from-black/60 to-transparent">
+                  <button onClick={() => setHasStarted(false)} className="text-white/80 hover:text-white flex items-center gap-2 text-xs font-bold uppercase tracking-widest">
+                      <ChevronLeft size={16} /> Exit Studio
+                  </button>
+                  
+                  <div className="flex items-center gap-4">
+                      {recordingState === 'recording' && (
+                          <div className="flex items-center gap-2 bg-red-500/20 border border-red-500/50 px-4 py-1.5 rounded-full backdrop-blur-md">
+                              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                              <span className="text-red-100 font-mono text-xs">{formatTime(recordingDuration)}</span>
+                          </div>
+                      )}
+                      <button onClick={() => setShowSettings(!showSettings)} className="text-white/80 hover:text-white">
+                          <Settings size={20} />
+                      </button>
+                  </div>
+              </div>
+
+              {/* Teleprompter Overlay */}
+              <Teleprompter 
+                  words={scriptWords}
+                  activeWordIndex={activeWordIndex}
+                  fontSize={fontSize}
+                  opacity={opacity}
+              />
+
+              {/* Bottom Controls */}
+              <div className="absolute bottom-0 left-0 right-0 p-10 flex justify-center items-center z-30 bg-gradient-to-t from-black/80 to-transparent">
+                  {recordingState === 'idle' ? (
+                      <button 
+                        onClick={startRecording}
+                        className="w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 border-4 border-white/20 flex items-center justify-center transition-all hover:scale-105 shadow-[0_0_30px_rgba(239,68,68,0.4)]"
+                      >
+                          <div className="w-6 h-6 rounded bg-white"></div>
+                      </button>
+                  ) : (
+                      <button 
+                        onClick={stopRecording}
+                        className="w-16 h-16 rounded-full bg-white/10 hover:bg-white/20 border-4 border-white flex items-center justify-center backdrop-blur-md transition-all hover:scale-105"
+                      >
+                          <div className="w-6 h-6 rounded bg-red-500"></div>
+                      </button>
+                  )}
+              </div>
+              
+              {/* Settings Modal */}
+              {showSettings && (
+                  <div className="absolute top-20 right-6 w-72 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 z-40 text-white">
+                      <div className="flex justify-between items-center mb-6">
+                          <span className="text-xs font-bold uppercase tracking-widest text-gold">Studio Settings</span>
+                          <button onClick={() => setShowSettings(false)}><X size={16} /></button>
+                      </div>
+                      
+                      <div className="space-y-6">
+                          <div>
+                              <label className="block text-xs font-medium mb-2 text-gray-400">Font Size</label>
+                              <input 
+                                type="range" min="20" max="80" value={fontSize} 
+                                onChange={(e) => setFontSize(Number(e.target.value))}
+                                className="w-full accent-gold h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-medium mb-2 text-gray-400">Opacity (Future Text)</label>
+                              <input 
+                                type="range" min="0" max="1" step="0.1" value={opacity} 
+                                onChange={(e) => setOpacity(Number(e.target.value))}
+                                className="w-full accent-gold h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
+                              />
                           </div>
                       </div>
-                      <textarea
-                        value={scriptText}
-                        onChange={handleScriptChange}
-                        placeholder="Paste your script here... (e.g. 'Hi, I'm Lily...')"
-                        className="flex-1 bg-black/20 text-white p-6 resize-none outline-none focus:bg-black/40 transition-colors text-lg leading-relaxed font-serif placeholder:text-white/20"
-                      />
-                      <div className="p-6 border-t border-white/10 flex justify-between items-center bg-black/20">
-                          <span className="text-xs text-gray-500 font-medium">
-                              {scriptWords.length} words • ~{Math.ceil(scriptWords.length / 150)} min
-                          </span>
-                          <button 
-                            onClick={() => setIsEditMode(false)}
-                            className="px-8 py-3 bg-gold text-charcoal rounded-xl font-bold hover:bg-yellow-500 transition-colors"
-                          >
-                            Save & Close
-                          </button>
-                      </div>
+                  </div>
+              )}
+            </div>
+          )}
+          
+          {/* Post-Recording Report Modal */}
+          {showReport && (
+              <div className="fixed inset-0 z-50 bg-cream flex flex-col overflow-hidden animate-in fade-in duration-300">
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="max-w-4xl mx-auto p-8 pb-32">
+                        {renderPerformanceReportContent()}
+                    </div>
                   </div>
               </div>
           )}
-          
-          {/* Post-Recording Modal (Analysis Trigger) */}
-          {recordedChunks.length > 0 && recordingState === 'idle' && !isAnalyzing && !showReport && (
-               <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-6">
-                    <div className="bg-white max-w-md w-full rounded-3xl p-8 text-center animate-in scale-in-95 duration-200">
-                        <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <Check size={32} />
-                        </div>
-                        <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">Recording Complete</h3>
-                        <p className="text-gray-500 mb-8">Your rehearsal is ready for AI analysis.</p>
-                        
-                        <div className="space-y-3">
-                            <button onClick={analyzePerformance} className="w-full py-4 bg-charcoal text-white rounded-xl font-bold hover:bg-black flex items-center justify-center gap-2 shadow-lg">
-                                <Sparkles size={18} /> Analyze Performance
-                            </button>
-                            <div className="grid grid-cols-2 gap-3">
-                                <button onClick={downloadVideo} className="py-3 bg-gray-100 text-charcoal rounded-xl font-bold hover:bg-gray-200 text-sm">
-                                    Download Video
-                                </button>
-                                <button onClick={() => setRecordedChunks([])} className="py-3 border border-gray-200 text-gray-500 rounded-xl font-bold hover:bg-gray-50 text-sm">
-                                    Discard
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-               </div>
-          )}
-          
-          {/* Analysis Loading State */}
-          {isAnalyzing && (
-               <div className="absolute inset-0 bg-cream/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center">
-                    <Loader2 size={48} className="text-gold animate-spin mb-6" />
-                    <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">Analyzing Performance</h3>
-                    <p className="text-gray-500 max-w-xs mx-auto animate-pulse">
-                        Gemini is reviewing your pacing, clarity, and delivery...
-                    </p>
-               </div>
-          )}
-          
-          {/* Performance Report Modal (Full Screen Overlay) */}
-          {showReport && performanceReport && (
-              <div className="absolute inset-0 bg-cream z-50 overflow-y-auto animate-in slide-in-from-bottom-10">
-                   <div className="max-w-4xl mx-auto p-8 pt-12 pb-24">
-                       {renderPerformanceReportContent()}
-                   </div>
-              </div>
-          )}
-      </div>
-  );
 
-  return (
-    <div className="h-full w-full">
-        {currentView === 'home' && renderHome()}
-        {currentView === 'analysis' && renderAnalysisView()}
-        {currentView === 'teleprompter' && renderTeleprompterView()}
-        {currentView === 'database' && renderDatabaseView()}
+          {/* Analysis Loading Overlay */}
+          {isAnalyzing && (
+               <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center">
+                   <div className="bg-white rounded-3xl p-8 text-center max-w-sm m-4">
+                       <Loader2 className="animate-spin mx-auto text-gold mb-4" size={40} />
+                       <h3 className="text-xl font-serif font-bold text-charcoal">Analyzing Performance...</h3>
+                       <p className="text-gray-500 mt-2 text-sm">Reviewing your delivery, pacing, and content accuracy.</p>
+                   </div>
+               </div>
+          )}
+        </>
+      )}
+
     </div>
   );
 };

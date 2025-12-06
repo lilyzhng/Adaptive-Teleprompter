@@ -1,4 +1,3 @@
-
 export interface ScriptWord {
   id: string;
   word: string;
@@ -54,7 +53,7 @@ export interface PerformanceReport {
 
 export interface SavedItem {
   id: string;
-  type: 'improvement' | 'highlight';
+  type: 'improvement' | 'highlight' | 'drill';
   date: string;
   category: string;
   title: string; // "strength" or "issue"
