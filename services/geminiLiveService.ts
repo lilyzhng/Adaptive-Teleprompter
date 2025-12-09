@@ -18,7 +18,7 @@ export class GeminiLiveService {
   private isConnected: boolean = false;
 
   constructor(callbacks: LiveServiceCallbacks) {
-    this.client = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    this.client = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
     this.callbacks = callbacks;
   }
 

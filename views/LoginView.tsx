@@ -14,10 +14,6 @@ const LoginView: React.FC = () => {
             </div>
 
             <div className="z-10 max-w-md w-full bg-white rounded-3xl shadow-xl border border-[#EBE8E0] p-10 text-center animate-in fade-in slide-in-from-bottom-8 duration-700">
-                <div className="mb-6 inline-block px-4 py-1.5 rounded-full border border-gold/40 text-gold text-[10px] font-bold tracking-[0.2em] uppercase bg-white/50 backdrop-blur-sm">
-                    Executive Performance Suite
-                </div>
-                
                 <h1 className="text-5xl font-serif font-bold text-charcoal mb-4 tracking-tight">
                     MicDrop
                 </h1>

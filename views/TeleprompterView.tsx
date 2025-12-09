@@ -257,7 +257,7 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
             const base64Audio = await extractAudioFromVideo(videoBlob);
             const report = await analyzeTeleprompterRecording(base64Audio, scriptText);
             setPerformanceReport(report);
-            onSaveReport(scriptText.substring(0, 30) + (scriptText.length > 30 ? "..." : "") || "Rehearsal", 'rehearsal', report);
+            await onSaveReport(scriptText.substring(0, 30) + (scriptText.length > 30 ? "..." : "") || "Rehearsal", 'rehearsal', report);
         } catch (e) {
             console.error(e);
             alert("Analysis failed.");

@@ -14,9 +14,6 @@ const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
             </div>
 
             <div className="text-center mb-16 z-10 max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-700 shrink-0 mt-10 md:mt-0">
-                <div className="mb-4 inline-block px-4 py-1.5 rounded-full border border-gold/40 text-gold text-[10px] font-bold tracking-[0.2em] uppercase bg-white/50 backdrop-blur-sm">
-                    Executive Performance Suite
-                </div>
                 <h1 className="text-6xl md:text-8xl font-serif mb-6 tracking-tight text-charcoal">
                     MicDrop
                 </h1>

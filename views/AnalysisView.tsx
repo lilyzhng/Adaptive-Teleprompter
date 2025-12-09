@@ -56,11 +56,13 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
         }
 
         setIsAnalyzing(true);
+        console.log("🚀 Starting analysis...");
         try {
             let base64Audio = null;
             let mimeType = 'audio/mp3';
 
             if (selectedFile) {
+                console.log("📁 Reading file:", selectedFile.name, selectedFile.size, "bytes");
                 base64Audio = await new Promise<string>((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = () => resolve((reader.result as string).split(',')[1]);
@@ -69,37 +71,56 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                 });
                 setUploadedAudioBase64(base64Audio);
                 mimeType = getAudioMimeType(selectedFile);
+                console.log("✅ File loaded, MIME type:", mimeType);
             }
 
             // LOGIC BRANCHING
             
             // Path A: Manual Transcript provided -> Skip Stage 1, Go straight to Stage 2
             if (manualTranscript.trim()) {
+                console.log("📝 Path A: Using manual transcript");
                 setAnalysisStep('analyzing');
                 setTranscriptionResult(manualTranscript); // Treat manual as the result
                 
+                console.log("🤖 Calling Stage 2 (Coach)...");
                 const report = await analyzeStage2_Coach(base64Audio, manualTranscript, uploadContext, mimeType);
+                console.log("✅ Stage 2 complete, report:", report);
                 setPerformanceReport(report);
-                onSaveReport(uploadContext || "Coach Session", 'coach', report);
+                console.log("💾 Saving report to database...");
+                await onSaveReport(uploadContext || "Coach Session", 'coach', report);
+                console.log("✅ Report saved successfully");
             } 
             // Path B: Audio Only -> Run Stage 1 (Transcribe) -> Automatically Run Stage 2 (Coach)
             else if (base64Audio) {
+                console.log("🎤 Path B: Audio analysis (2 stages)");
                 // Phase 1: Transcribe
                 setAnalysisStep('transcribing');
+                console.log("📝 Starting Stage 1 (Transcribe)...");
                 const transcript = await analyzeStage1_Transcribe(base64Audio, mimeType, uploadContext);
+                console.log("✅ Stage 1 complete, transcript length:", transcript.length);
                 setTranscriptionResult(transcript);
 
                 // Phase 2: Coach (Automatic Transition)
                 setAnalysisStep('analyzing');
+                console.log("🤖 Starting Stage 2 (Coach)...");
                 const report = await analyzeStage2_Coach(base64Audio, transcript, uploadContext, mimeType);
+                console.log("✅ Stage 2 complete, report:", report);
                 setPerformanceReport(report);
-                onSaveReport(uploadContext || "Coach Session", 'coach', report);
+                console.log("💾 Saving report to database...");
+                await onSaveReport(uploadContext || "Coach Session", 'coach', report);
+                console.log("✅ Report saved successfully");
             } else {
                 throw new Error("No input provided");
             }
 
         } catch (error: any) {
-            console.error("Analysis failed:", error);
+            console.error("❌ Analysis failed:", error);
+            console.error("Error details:", {
+                message: error?.message,
+                stack: error?.stack,
+                type: typeof error,
+                fullError: error
+            });
             
             let errorMessage = "Unknown error";
             if (error instanceof Error) {
@@ -119,8 +140,10 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                 errorMessage = "Network Error: The file may be too large for the connection or API limits. Please try a smaller file (under 50MB).";
             }
 
+            console.error("❌ Final error message:", errorMessage);
             alert(`Analysis failed. ${errorMessage}`);
         } finally {
+            console.log("🔄 Analysis complete, resetting state");
             setIsAnalyzing(false);
             setAnalysisStep('idle');
         }
@@ -137,6 +160,16 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
         a.click();
         document.body.removeChild(a);
     };
+
+    // Debug logging
+    React.useEffect(() => {
+        console.log("🎨 State changed:", {
+            isAnalyzing,
+            analysisStep,
+            hasPerformanceReport: !!performanceReport,
+            hasTranscript: !!transcriptionResult
+        });
+    }, [isAnalyzing, analysisStep, performanceReport, transcriptionResult]);
 
     return (
       <div className="h-full bg-cream text-charcoal flex flex-col font-sans overflow-hidden">

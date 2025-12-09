@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { SavedItem, SavedReport, PerformanceReport } from './types';
-import { generateId } from './utils';
 import HomeView from './views/HomeView';
 import DatabaseView from './views/DatabaseView';
 import AnalysisView from './views/AnalysisView';
@@ -9,6 +8,7 @@ import TeleprompterView from './views/TeleprompterView';
 import LoginView from './views/LoginView';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import UserMenu from './components/UserMenu';
+import * as db from './services/databaseService';
 
 // Application Views
 type AppView = 'home' | 'teleprompter' | 'analysis' | 'database';
@@ -16,103 +16,94 @@ type AppView = 'home' | 'teleprompter' | 'analysis' | 'database';
 const MainApp: React.FC = () => {
   const { user, isLoading } = useAuth();
   const [currentView, setCurrentView] = useState<AppView>('home');
-  
-  // -- User-Specific Persistence --
-  // We use the user.id to namespace the data
-  const STORAGE_KEY_ITEMS = user ? `micdrop_items_v2_${user.id}` : 'micdrop_items_v2_guest';
-  const STORAGE_KEY_REPORTS = user ? `micdrop_reports_v2_${user.id}` : 'micdrop_reports_v2_guest';
+  const [savedItems, setSavedItems] = useState<SavedItem[]>([]);
+  const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
-  const [savedItems, setSavedItems] = useState<SavedItem[]>(() => {
-      if (!user) return [];
-      try {
-          const stored = localStorage.getItem(STORAGE_KEY_ITEMS);
-          return stored ? JSON.parse(stored) : [];
-      } catch { return []; }
-  });
-
-  const [savedReports, setSavedReports] = useState<SavedReport[]>(() => {
-      if (!user) return [];
-      try {
-          const stored = localStorage.getItem(STORAGE_KEY_REPORTS);
-          return stored ? JSON.parse(stored) : [];
-      } catch { return []; }
-  });
-
-  // Load data when user changes (re-sync)
+  // Load data from Supabase when user logs in
   useEffect(() => {
-      if (!user) return;
-      try {
-          const storedItems = localStorage.getItem(STORAGE_KEY_ITEMS);
-          const storedReports = localStorage.getItem(STORAGE_KEY_REPORTS);
-          setSavedItems(storedItems ? JSON.parse(storedItems) : []);
-          setSavedReports(storedReports ? JSON.parse(storedReports) : []);
-      } catch (e) {
-          console.error("Failed to load user data", e);
+      if (!user) {
+          setSavedItems([]);
+          setSavedReports([]);
+          return;
       }
-  }, [user, STORAGE_KEY_ITEMS, STORAGE_KEY_REPORTS]);
 
-  // Sync data when state changes
-  useEffect(() => {
-      if (!user) return;
-      try {
-          localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(savedItems));
-      } catch (e) {
-          console.error("Failed to save items", e);
-      }
-  }, [savedItems, user, STORAGE_KEY_ITEMS]);
+      const loadUserData = async () => {
+          setIsLoadingData(true);
+          try {
+              const [items, reports] = await Promise.all([
+                  db.fetchSavedItems(user.id),
+                  db.fetchSavedReports(user.id)
+              ]);
+              setSavedItems(items);
+              setSavedReports(reports);
+          } catch (e) {
+              console.error("Failed to load user data from database", e);
+          } finally {
+              setIsLoadingData(false);
+          }
+      };
 
-  useEffect(() => {
-      if (!user) return;
-      try {
-          localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(savedReports));
-      } catch (e) {
-          console.error("Failed to save reports", e);
-      }
-  }, [savedReports, user, STORAGE_KEY_REPORTS]);
+      loadUserData();
+  }, [user]);
 
 
   // -- Snippet Logic --
-  const toggleSaveItem = useCallback((item: Omit<SavedItem, 'id' | 'date'>) => {
-      setSavedItems(prevItems => {
-          const existingIndex = prevItems.findIndex(i => i.title === item.title && i.content === item.content);
-          if (existingIndex >= 0) {
-              return prevItems.filter((_, idx) => idx !== existingIndex);
-          } else {
-              const newItem: SavedItem = { ...item, id: generateId(), date: new Date().toISOString() };
-              return [newItem, ...prevItems];
+  const toggleSaveItem = useCallback(async (item: Omit<SavedItem, 'id' | 'date'>) => {
+      if (!user) return;
+      
+      const existingItem = savedItems.find(i => i.title === item.title && i.content === item.content);
+      
+      if (existingItem) {
+          // Delete from database
+          const success = await db.deleteSavedItem(existingItem.id);
+          if (success) {
+              setSavedItems(prev => prev.filter(i => i.id !== existingItem.id));
           }
-      });
-  }, []);
+      } else {
+          // Create in database
+          const newItem = await db.createSavedItem(user.id, item);
+          if (newItem) {
+              setSavedItems(prev => [newItem, ...prev]);
+          }
+      }
+  }, [user, savedItems]);
   
   const isSaved = useCallback((title: string, content: string) => {
       return savedItems.some(i => i.title === title && i.content === content);
   }, [savedItems]);
   
-  const deleteSavedItem = useCallback((id: string) => {
-      setSavedItems(prev => prev.filter(i => i.id !== id));
+  const deleteSavedItem = useCallback(async (id: string) => {
+      const success = await db.deleteSavedItem(id);
+      if (success) {
+          setSavedItems(prev => prev.filter(i => i.id !== id));
+      }
   }, []);
 
   // -- Report Logic --
-  const saveReport = useCallback((title: string, type: 'coach' | 'rehearsal', report: PerformanceReport) => {
-      const newReport: SavedReport = {
-          id: generateId(),
-          date: new Date().toISOString(),
-          title: title || "Untitled Session",
-          type,
-          rating: report.rating,
-          reportData: report
-      };
-      setSavedReports(prev => [newReport, ...prev]);
+  const saveReport = useCallback(async (title: string, type: 'coach' | 'rehearsal', report: PerformanceReport) => {
+      if (!user) return;
+      
+      const newReport = await db.createSavedReport(user.id, title, type, report);
+      if (newReport) {
+          setSavedReports(prev => [newReport, ...prev]);
+      }
+  }, [user]);
+
+  const updateSavedReport = useCallback(async (id: string, updates: Partial<SavedReport>) => {
+      const success = await db.updateSavedReport(id, updates);
+      if (success) {
+          setSavedReports(prev => prev.map(report => 
+              report.id === id ? { ...report, ...updates } : report
+          ));
+      }
   }, []);
 
-  const updateSavedReport = useCallback((id: string, updates: Partial<SavedReport>) => {
-      setSavedReports(prev => prev.map(report => 
-          report.id === id ? { ...report, ...updates } : report
-      ));
-  }, []);
-
-  const deleteSavedReport = useCallback((id: string) => {
-      setSavedReports(prev => prev.filter(r => r.id !== id));
+  const deleteSavedReport = useCallback(async (id: string) => {
+      const success = await db.deleteSavedReport(id);
+      if (success) {
+          setSavedReports(prev => prev.filter(r => r.id !== id));
+      }
   }, []);
 
   // -- Navigation --
@@ -128,8 +119,10 @@ const MainApp: React.FC = () => {
       setCurrentView('home');
   };
 
-  if (isLoading) {
-      return <div className="h-screen w-screen bg-cream flex items-center justify-center">Loading...</div>;
+  if (isLoading || isLoadingData) {
+      return <div className="h-screen w-screen bg-cream flex items-center justify-center">
+          <div className="text-charcoal">Loading...</div>
+      </div>;
   }
 
   if (!user) {

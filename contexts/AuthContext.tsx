@@ -1,6 +1,8 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../config/supabase';
 import { User } from '../types';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 interface AuthContextType {
     user: User | null;
@@ -11,48 +13,72 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Helper function to convert Supabase User to our User type
+const convertSupabaseUser = (supabaseUser: SupabaseUser): User => {
+    return {
+        id: supabaseUser.id,
+        name: supabaseUser.user_metadata?.name || supabaseUser.user_metadata?.full_name || 'User',
+        email: supabaseUser.email || '',
+        avatarUrl: supabaseUser.user_metadata?.avatar_url || supabaseUser.user_metadata?.picture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${supabaseUser.id}`
+    };
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        // Check for existing session
-        const storedUser = localStorage.getItem('micdrop_user_session');
-        if (storedUser) {
-            setUser(JSON.parse(storedUser));
-        }
-        setIsLoading(false);
+        // Check active session
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (session?.user) {
+                setUser(convertSupabaseUser(session.user));
+            }
+            setIsLoading(false);
+        });
+
+        // Listen to auth changes
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (session?.user) {
+                setUser(convertSupabaseUser(session.user));
+            } else {
+                setUser(null);
+            }
+            setIsLoading(false);
+        });
+
+        return () => subscription.unsubscribe();
     }, []);
 
     const signInWithGoogle = async () => {
         setIsLoading(true);
-        // --- PRODUCTION NOTE ---
-        // In a real app, you would use Firebase Auth here:
-        // const result = await signInWithPopup(auth, googleProvider);
-        // setUser(result.user);
-        
-        // --- SIMULATION ---
-        // Simulating network delay and Google Login
-        await new Promise(resolve => setTimeout(resolve, 800));
-        
-        const mockUser: User = {
-            id: 'user_' + Math.random().toString(36).substr(2, 9),
-            name: 'Demo User',
-            email: 'demo@example.com',
-            avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix'
-        };
-        
-        setUser(mockUser);
-        localStorage.setItem('micdrop_user_session', JSON.stringify(mockUser));
-        setIsLoading(false);
+        try {
+            const { error } = await supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: window.location.origin
+                }
+            });
+            if (error) throw error;
+        } catch (error) {
+            console.error('Error signing in with Google:', error);
+            setIsLoading(false);
+            throw error;
+        }
+        // Note: isLoading will be set to false by onAuthStateChange
     };
 
     const signOut = async () => {
         setIsLoading(true);
-        await new Promise(resolve => setTimeout(resolve, 500));
-        localStorage.removeItem('micdrop_user_session');
-        setUser(null);
-        setIsLoading(false);
+        try {
+            const { error } = await supabase.auth.signOut();
+            if (error) throw error;
+            setUser(null);
+        } catch (error) {
+            console.error('Error signing out:', error);
+            throw error;
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     return (
