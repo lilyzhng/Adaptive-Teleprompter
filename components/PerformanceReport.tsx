@@ -1,17 +1,18 @@
 
 import React, { useRef, useState } from 'react';
-import { Download, Award, PenTool, Quote, Lightbulb, Bookmark, ThumbsUp, Star, Ear, AlertCircle, Mic2 } from 'lucide-react';
+import { Download, Award, PenTool, Quote, Lightbulb, Bookmark, ThumbsUp, Star, Ear, AlertCircle, Mic2, FileText } from 'lucide-react';
 import { PerformanceReport as ReportType, SavedItem } from '../types';
 import html2canvas from 'html2canvas';
 
 interface PerformanceReportProps {
     report: ReportType;
+    transcript?: string;
     isSaved: (title: string, content: string) => boolean;
     onToggleSave: (item: Omit<SavedItem, 'id' | 'date'>) => void;
     onDone: (force: boolean) => void;
 }
 
-const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, isSaved, onToggleSave, onDone }) => {
+const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcript, isSaved, onToggleSave, onDone }) => {
     const { rating, summary, detailedFeedback, highlights, pronunciationFeedback, coachingRewrite } = report;
     const [showRewrite, setShowRewrite] = useState(false);
     const reportRef = useRef<HTMLDivElement>(null);
@@ -38,6 +39,18 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, isSaved, 
         }
     };
 
+    const downloadTranscript = () => {
+        if (!transcript) return;
+        const blob = new Blob([transcript], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `transcript-${new Date().toISOString().split('T')[0]}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    };
+
     return (
         <div ref={reportRef} className="bg-cream min-h-full">
             <div className="mb-8 flex items-center justify-between">
@@ -48,6 +61,11 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, isSaved, 
                      <h2 className="text-4xl font-serif font-bold text-charcoal">Performance Report</h2>
                 </div>
                 <div className="flex gap-3">
+                     {transcript && (
+                        <button onClick={downloadTranscript} className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm font-medium hover:bg-gray-50 text-charcoal flex items-center gap-2">
+                            <FileText size={14} /> Download Transcript
+                        </button>
+                     )}
                      <button onClick={downloadReportAsImage} className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm font-medium hover:bg-gray-50 text-charcoal flex items-center gap-2">
                         <Download size={14} /> Export Image
                      </button>
@@ -143,7 +161,7 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, isSaved, 
                             <div className="grid md:grid-cols-2 gap-6">
                                 <div className="bg-[#FAF9F6] p-6 rounded-xl border-l-4 border-gray-200">
                                     <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Specific Instance</h5>
-                                    <p className="text-charcoal font-serif text-lg leading-relaxed">"{item.instance}"</p>
+                                    <p className="text-charcoal text-lg leading-relaxed">"{item.instance}"</p>
                                 </div>
                                 <div className="bg-green-50/50 p-6 rounded-xl border-l-4 border-green-400">
                                     <h5 className="text-[10px] font-bold text-green-600 uppercase tracking-widest mb-3 flex items-center gap-2">

@@ -6,63 +6,72 @@ import HomeView from './views/HomeView';
 import DatabaseView from './views/DatabaseView';
 import AnalysisView from './views/AnalysisView';
 import TeleprompterView from './views/TeleprompterView';
+import LoginView from './views/LoginView';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import UserMenu from './components/UserMenu';
 
 // Application Views
 type AppView = 'home' | 'teleprompter' | 'analysis' | 'database';
-type AnalysisMode = 'sound_check' | 'coach';
 
-const STORAGE_KEY_ITEMS = 'micdrop_saved_items_v2';
-const STORAGE_KEY_REPORTS = 'micdrop_saved_reports_v2';
-
-const App: React.FC = () => {
+const MainApp: React.FC = () => {
+  const { user, isLoading } = useAuth();
   const [currentView, setCurrentView] = useState<AppView>('home');
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('sound_check');
   
-  // -- Persistence State (Lazy Initialization) --
-  // We initialize state directly from localStorage to prevent data loss on initial render
+  // -- User-Specific Persistence --
+  // We use the user.id to namespace the data
+  const STORAGE_KEY_ITEMS = user ? `micdrop_items_v2_${user.id}` : 'micdrop_items_v2_guest';
+  const STORAGE_KEY_REPORTS = user ? `micdrop_reports_v2_${user.id}` : 'micdrop_reports_v2_guest';
+
   const [savedItems, setSavedItems] = useState<SavedItem[]>(() => {
+      if (!user) return [];
       try {
-          if (typeof window === 'undefined') return [];
           const stored = localStorage.getItem(STORAGE_KEY_ITEMS);
           return stored ? JSON.parse(stored) : [];
-      } catch (e) {
-          console.error("Failed to load saved items", e);
-          return [];
-      }
+      } catch { return []; }
   });
 
   const [savedReports, setSavedReports] = useState<SavedReport[]>(() => {
+      if (!user) return [];
       try {
-          if (typeof window === 'undefined') return [];
           const stored = localStorage.getItem(STORAGE_KEY_REPORTS);
           return stored ? JSON.parse(stored) : [];
-      } catch (e) {
-          console.error("Failed to load saved reports", e);
-          return [];
-      }
+      } catch { return []; }
   });
 
-  // -- Auto-Sync Effects --
-  // Whenever state changes, we automatically sync to localStorage.
+  // Load data when user changes (re-sync)
   useEffect(() => {
+      if (!user) return;
+      try {
+          const storedItems = localStorage.getItem(STORAGE_KEY_ITEMS);
+          const storedReports = localStorage.getItem(STORAGE_KEY_REPORTS);
+          setSavedItems(storedItems ? JSON.parse(storedItems) : []);
+          setSavedReports(storedReports ? JSON.parse(storedReports) : []);
+      } catch (e) {
+          console.error("Failed to load user data", e);
+      }
+  }, [user, STORAGE_KEY_ITEMS, STORAGE_KEY_REPORTS]);
+
+  // Sync data when state changes
+  useEffect(() => {
+      if (!user) return;
       try {
           localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(savedItems));
       } catch (e) {
-          console.error("Failed to save items to localStorage", e);
+          console.error("Failed to save items", e);
       }
-  }, [savedItems]);
+  }, [savedItems, user, STORAGE_KEY_ITEMS]);
 
   useEffect(() => {
+      if (!user) return;
       try {
           localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(savedReports));
       } catch (e) {
-          console.error("Failed to save reports to localStorage", e);
+          console.error("Failed to save reports", e);
       }
-  }, [savedReports]);
+  }, [savedReports, user, STORAGE_KEY_REPORTS]);
 
 
   // -- Snippet Logic --
-  // Use useCallback and functional updates (prev => ...) to ensure thread safety
   const toggleSaveItem = useCallback((item: Omit<SavedItem, 'id' | 'date'>) => {
       setSavedItems(prevItems => {
           const existingIndex = prevItems.findIndex(i => i.title === item.title && i.content === item.content);
@@ -107,23 +116,33 @@ const App: React.FC = () => {
   }, []);
 
   // -- Navigation --
-  const handleNavigate = (view: AppView, mode?: AnalysisMode) => {
-      if (mode) setAnalysisMode(mode);
+  const handleNavigate = (view: AppView) => {
       setCurrentView(view);
   };
 
   const goHome = (force: boolean | unknown = false) => {
-      // Ensure force is a boolean because some event handlers might pass an event object
       const shouldForce = force === true;
-      
       if (!shouldForce) {
           if (!window.confirm("Are you sure you want to go back? Current progress will be lost.")) return;
       }
       setCurrentView('home');
   };
 
+  if (isLoading) {
+      return <div className="h-screen w-screen bg-cream flex items-center justify-center">Loading...</div>;
+  }
+
+  if (!user) {
+      return <LoginView />;
+  }
+
   return (
-    <div className="h-screen w-screen overflow-hidden bg-cream text-charcoal font-sans">
+    <div className="h-screen w-screen overflow-hidden bg-cream text-charcoal font-sans relative">
+      {/* User Menu Overlay - Available on all views */}
+      <div className="absolute top-6 right-6 z-[60]">
+          <UserMenu />
+      </div>
+
       {currentView === 'home' && (
           <HomeView onNavigate={handleNavigate} />
       )}
@@ -143,7 +162,6 @@ const App: React.FC = () => {
       
       {currentView === 'analysis' && (
           <AnalysisView 
-              mode={analysisMode} 
               onHome={goHome} 
               isSaved={isSaved} 
               onToggleSave={toggleSaveItem}
@@ -161,6 +179,14 @@ const App: React.FC = () => {
       )}
     </div>
   );
+};
+
+const App: React.FC = () => {
+    return (
+        <AuthProvider>
+            <MainApp />
+        </AuthProvider>
+    );
 };
 
 export default App;

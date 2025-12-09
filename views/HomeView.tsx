@@ -1,9 +1,9 @@
 
 import React from 'react';
-import { Database, AudioLines, ArrowRight, Flame, ScrollText } from 'lucide-react';
+import { Database, ArrowRight, Flame, ScrollText } from 'lucide-react';
 
 interface HomeViewProps {
-    onNavigate: (view: 'teleprompter' | 'analysis' | 'database', mode?: 'sound_check' | 'coach') => void;
+    onNavigate: (view: 'teleprompter' | 'analysis' | 'database') => void;
 }
 
 const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
@@ -32,55 +32,42 @@ const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
                 </button>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-6 z-10 w-full max-w-6xl px-4 pb-10 shrink-0">
-                {/* Card 1: Sound Check */}
-                <button onClick={() => onNavigate('analysis', 'sound_check')} className="group bg-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all border border-[#EBE8E0] hover:border-gold/30 text-left relative overflow-hidden flex flex-col h-full">
+            <div className="grid md:grid-cols-2 gap-8 z-10 w-full max-w-5xl px-4 pb-10 shrink-0">
+                {/* Card 1: The Coach */}
+                <button onClick={() => onNavigate('analysis')} className="group bg-white p-10 rounded-3xl shadow-xl hover:shadow-2xl transition-all border border-[#EBE8E0] hover:border-gold/30 text-left relative overflow-hidden flex flex-col h-full">
                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:opacity-20 transition-opacity">
-                         <AudioLines size={80} className="text-charcoal" />
+                         <Flame size={120} className="text-gold" />
                      </div>
-                     <div className="w-14 h-14 rounded-2xl bg-charcoal text-white flex items-center justify-center mb-6 shadow-lg group-hover:scale-110 transition-transform duration-300 shrink-0">
-                         <AudioLines size={24} />
+                     <div className="w-16 h-16 rounded-2xl bg-cream border border-gold/20 text-gold flex items-center justify-center mb-8 shadow-lg group-hover:scale-110 transition-transform duration-300 shrink-0">
+                         <Flame size={32} />
                      </div>
                      <div className="flex-1">
-                         <h3 className="text-xl font-serif font-bold text-charcoal mb-3">Sound Check</h3>
-                         <p className="text-gray-500 text-sm leading-relaxed mb-6">Upload your raw audio. Get a forensic, timestamped transcript that captures every hesitation.</p>
+                         <h3 className="text-2xl font-serif font-bold text-charcoal mb-4">The Coach</h3>
+                         <p className="text-gray-500 text-base leading-relaxed mb-8">
+                             Complete interview analysis. Upload your audio to get a forensic transcript followed by executive-level feedback on delivery, strategy, and leadership presence.
+                         </p>
                      </div>
                      <div className="flex items-center gap-2 text-gold font-bold text-xs tracking-widest uppercase mt-auto">
-                         Analyze Audio <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                         Start Analysis <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
                      </div>
                 </button>
 
-                {/* Card 2: Coach */}
-                <button onClick={() => onNavigate('analysis', 'coach')} className="group bg-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all border border-[#EBE8E0] hover:border-gold/30 text-left relative overflow-hidden flex flex-col h-full">
+                {/* Card 2: Rehearsal */}
+                <button onClick={() => onNavigate('teleprompter')} className="group bg-white p-10 rounded-3xl shadow-xl hover:shadow-2xl transition-all border border-[#EBE8E0] hover:border-gold/30 text-left relative overflow-hidden flex flex-col h-full">
                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:opacity-20 transition-opacity">
-                         <Flame size={80} className="text-gold" />
+                         <ScrollText size={120} className="text-charcoal" />
                      </div>
-                     <div className="w-14 h-14 rounded-2xl bg-cream border border-gold/20 text-gold flex items-center justify-center mb-6 shadow-lg group-hover:scale-110 transition-transform duration-300 shrink-0">
-                         <Flame size={24} />
+                     <div className="w-16 h-16 rounded-2xl bg-charcoal text-white flex items-center justify-center mb-8 shadow-lg group-hover:scale-110 transition-transform duration-300 shrink-0">
+                         <ScrollText size={32} />
                      </div>
                      <div className="flex-1">
-                         <h3 className="text-xl font-serif font-bold text-charcoal mb-3">Coach</h3>
-                         <p className="text-gray-500 text-sm leading-relaxed mb-6">Executive-level feedback on delivery, strategy, and leadership presence.</p>
+                         <h3 className="text-2xl font-serif font-bold text-charcoal mb-4">Rehearsal</h3>
+                         <p className="text-gray-500 text-base leading-relaxed mb-8">
+                            Practice your pitch with an adaptive teleprompter that listens to your pace in real-time. Record, review, and perfect your delivery.
+                         </p>
                      </div>
                      <div className="flex items-center gap-2 text-gold font-bold text-xs tracking-widest uppercase mt-auto">
-                         Get Coached <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
-                     </div>
-                </button>
-
-                {/* Card 3: Rehearsal */}
-                <button onClick={() => onNavigate('teleprompter')} className="group bg-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all border border-[#EBE8E0] hover:border-gold/30 text-left relative overflow-hidden flex flex-col h-full">
-                     <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:opacity-20 transition-opacity">
-                         <ScrollText size={80} className="text-charcoal" />
-                     </div>
-                     <div className="w-14 h-14 rounded-2xl bg-charcoal text-white flex items-center justify-center mb-6 shadow-lg group-hover:scale-110 transition-transform duration-300 shrink-0">
-                         <ScrollText size={24} />
-                     </div>
-                     <div className="flex-1">
-                         <h3 className="text-xl font-serif font-bold text-charcoal mb-3">Rehearsal</h3>
-                         <p className="text-gray-500 text-sm leading-relaxed mb-6">Practice your pitch with an adaptive teleprompter that listens to your pace in real-time.</p>
-                     </div>
-                     <div className="flex items-center gap-2 text-gold font-bold text-xs tracking-widest uppercase mt-auto">
-                         Start Practice <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                         Enter Studio <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
                      </div>
                 </button>
             </div>
