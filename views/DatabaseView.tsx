@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ChevronRight, ArrowLeft, Edit2, Check, X } from 'lucide-react';
+import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ChevronRight, ArrowLeft, Edit2, Check, X, Play } from 'lucide-react';
 import { SavedItem, SavedReport, PerformanceReport } from '../types';
 import PerformanceReportComponent from '../components/PerformanceReport';
 import { titleToSlug, findReportBySlug } from '../utils';
@@ -79,7 +79,8 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                 <div className="flex-1 overflow-y-auto p-8">
                      <div className="max-w-4xl mx-auto pb-20">
                          <PerformanceReportComponent 
-                            report={selectedReport.reportData} 
+                            report={selectedReport.reportData}
+                            context={selectedReport.title}
                             isSaved={isSaved} 
                             onToggleSave={onToggleSave} 
                             onDone={() => navigate('/database')} 
@@ -257,32 +258,58 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                          </div>
                                          <div className="grid gap-6">
                                              {savedItems.filter(i => i.type === 'improvement').map(item => (
-                                                 <div key={item.id} className="bg-white rounded-2xl p-8 shadow-sm border border-[#EBE8E0] relative group">
-                                                     <button 
-                                                         onClick={() => onDeleteSnippet(item.id)}
-                                                         className="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
-                                                         title="Remove from database"
-                                                     >
-                                                         <Trash2 size={16} />
-                                                     </button>
-                                                     <div className="flex items-center gap-2 mb-4">
-                                                          <div className="w-2 h-2 rounded-full bg-red-400"></div>
-                                                          <span className="text-[10px] font-bold text-gold uppercase tracking-widest">{item.category}</span>
-                                                          <span className="text-[10px] text-gray-300 ml-auto">{new Date(item.date).toLocaleDateString()}</span>
-                                                     </div>
-                                                     <h4 className="text-lg font-bold text-charcoal mb-2">{item.title}</h4>
-                                                     <div className="bg-[#FAF9F6] p-4 rounded-xl border-l-4 border-gray-200 mb-4">
-                                                          <p className="text-charcoal font-serif text-sm leading-relaxed">"{item.content}"</p>
-                                                     </div>
-                                                     {item.rewrite && (
-                                                         <div className="bg-green-50/50 p-4 rounded-xl border-l-4 border-green-400">
-                                                             <h5 className="text-[10px] font-bold text-green-600 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                                                <PenTool size={12}/> The Rewrite
-                                                             </h5>
-                                                             <p className="text-charcoal font-serif text-sm leading-relaxed">"{item.rewrite}"</p>
-                                                         </div>
-                                                     )}
-                                                 </div>
+                                                <div key={item.id} className="bg-white rounded-2xl p-8 shadow-sm border border-[#EBE8E0] relative group">
+                                                    <button 
+                                                        onClick={() => onDeleteSnippet(item.id)}
+                                                        className="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                                                        title="Remove from database"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                    <div className="flex items-center gap-2 mb-4">
+                                                         <div className="w-2 h-2 rounded-full bg-red-400"></div>
+                                                         <span className="text-[10px] font-bold text-gold uppercase tracking-widest">{item.category}</span>
+                                                         <span className="text-[10px] text-gray-300 ml-auto">{new Date(item.date).toLocaleDateString()}</span>
+                                                    </div>
+                                                    
+                                                    {/* Question Context */}
+                                                    {item.question && (
+                                                        <div className="bg-blue-50/50 p-4 rounded-xl border-l-4 border-blue-400 mb-4">
+                                                            <h5 className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-2">Interview Question</h5>
+                                                            <p className="text-charcoal text-sm italic">"{item.question}"</p>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    <h4 className="text-lg font-bold text-charcoal mb-2">{item.title}</h4>
+                                                    <div className="bg-[#FAF9F6] p-4 rounded-xl border-l-4 border-gray-200 mb-4">
+                                                         <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">What You Said</h5>
+                                                         <p className="text-charcoal font-serif text-sm leading-relaxed">"{item.content}"</p>
+                                                    </div>
+                                                    
+                                                    {(item.rewrite || item.humanRewrite) && (
+                                                        <div className="bg-green-50/50 p-4 rounded-xl border-l-4 border-green-400 mb-4">
+                                                            <h5 className="text-[10px] font-bold text-green-600 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                                               <PenTool size={12}/> The Human Rewrite (For Practice)
+                                                            </h5>
+                                                            <p className="text-charcoal font-serif text-sm leading-relaxed">"{item.humanRewrite || item.rewrite}"</p>
+                                                            {item.explanation && (
+                                                                <div className="mt-3 pt-3 border-t border-green-200/50">
+                                                                    <p className="text-xs text-green-800 italic">{item.explanation}</p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {/* Rehearse Button */}
+                                                    {item.question && (
+                                                        <button 
+                                                            onClick={() => navigate('/teleprompter', { state: { question: item.question, targetAnswer: item.humanRewrite || item.rewrite } })}
+                                                            className="w-full py-3 bg-gold text-white rounded-xl font-bold hover:bg-gold/90 transition-colors shadow-sm flex items-center justify-center gap-2"
+                                                        >
+                                                            <Play size={16} /> Start Rehearsal with This Question
+                                                        </button>
+                                                    )}
+                                                </div>
                                              ))}
                                          </div>
                                      </div>

@@ -20,7 +20,12 @@ export const fetchSavedItems = async (userId: string): Promise<SavedItem[]> => {
         title: item.title,
         content: item.content,
         type: item.type,
-        date: item.created_at
+        date: item.created_at,
+        question: item.question,
+        humanRewrite: item.human_rewrite,
+        category: item.category || '',
+        rewrite: item.rewrite,
+        explanation: item.explanation
     }));
 };
 
@@ -31,7 +36,12 @@ export const createSavedItem = async (userId: string, item: Omit<SavedItem, 'id'
             user_id: userId,
             title: item.title,
             content: item.content,
-            type: item.type
+            type: item.type,
+            category: item.category,
+            rewrite: item.rewrite,
+            explanation: item.explanation,
+            question: item.question,
+            human_rewrite: item.humanRewrite
         })
         .select()
         .single();
@@ -46,7 +56,12 @@ export const createSavedItem = async (userId: string, item: Omit<SavedItem, 'id'
         title: data.title,
         content: data.content,
         type: data.type,
-        date: data.created_at
+        date: data.created_at,
+        category: data.category || '',
+        rewrite: data.rewrite,
+        explanation: data.explanation,
+        question: data.question,
+        humanRewrite: data.human_rewrite
     };
 };
 

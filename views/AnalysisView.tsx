@@ -296,6 +296,7 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                          <PerformanceReportComponent
                             report={performanceReport}
                             transcript={transcriptionResult || manualTranscript}
+                            context={uploadContext}
                             isSaved={isSaved}
                             onToggleSave={onToggleSave}
                             onDone={(f) => onHome(f)}

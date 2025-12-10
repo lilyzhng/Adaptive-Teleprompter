@@ -7,12 +7,13 @@ import html2canvas from 'html2canvas';
 interface PerformanceReportProps {
     report: ReportType;
     transcript?: string;
+    context?: string; // Interview context/question for rehearsal practice
     isSaved: (title: string, content: string) => boolean;
     onToggleSave: (item: Omit<SavedItem, 'id' | 'date'>) => void;
     onDone: (force: boolean) => void;
 }
 
-const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcript, isSaved, onToggleSave, onDone }) => {
+const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcript, context, isSaved, onToggleSave, onDone }) => {
     const { rating, summary, detailedFeedback, highlights, pronunciationFeedback, coachingRewrite } = report;
     const [showRewrite, setShowRewrite] = useState(false);
     const reportRef = useRef<HTMLDivElement>(null);
@@ -142,7 +143,9 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
                                     title: item.issue,
                                     content: item.instance,
                                     rewrite: item.rewrite,
-                                    explanation: item.explanation
+                                    explanation: item.explanation,
+                                    question: context,
+                                    humanRewrite: item.rewrite
                                 })}
                                 className={`absolute top-6 right-6 p-2 rounded-full transition-all ${saved ? 'text-gold bg-gold/10' : 'text-gray-300 hover:text-charcoal hover:bg-gray-50'}`}
                                 title={saved ? "Remove from database" : "Save to database"}
@@ -201,7 +204,8 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
                                             type: 'highlight',
                                             category: item.category,
                                             title: item.strength,
-                                            content: item.quote
+                                            content: item.quote,
+                                            question: context
                                         })}
                                         className={`absolute top-4 right-4 p-2 rounded-full z-10 transition-all ${saved ? 'text-gold bg-gold/10' : 'text-gray-300 hover:text-charcoal hover:bg-gray-50'}`}
                                         title={saved ? "Remove from database" : "Save to database"}
@@ -245,7 +249,9 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
                                                 category: 'Pronunciation',
                                                 title: drill.issue,
                                                 content: drill.phrase,
-                                                rewrite: drill.practiceDrill
+                                                rewrite: drill.practiceDrill,
+                                                question: context,
+                                                humanRewrite: drill.practiceDrill
                                             })}
                                             className={`absolute top-4 right-4 p-2 rounded-full transition-all z-10 ${saved ? 'text-gold bg-gold/10' : 'text-gray-300 hover:text-charcoal hover:bg-white'}`}
                                             title={saved ? "Remove from database" : "Save to database"}

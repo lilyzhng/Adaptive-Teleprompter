@@ -17,6 +17,11 @@ export interface Database {
           content: string
           type: 'script' | 'response' | 'tip' | 'improvement' | 'highlight' | 'drill'
           created_at: string
+          category?: string
+          rewrite?: string
+          explanation?: string
+          question?: string
+          human_rewrite?: string
         }
         Insert: {
           id?: string
@@ -25,6 +30,11 @@ export interface Database {
           content: string
           type: 'script' | 'response' | 'tip' | 'improvement' | 'highlight' | 'drill'
           created_at?: string
+          category?: string
+          rewrite?: string
+          explanation?: string
+          question?: string
+          human_rewrite?: string
         }
         Update: {
           id?: string
@@ -33,6 +43,11 @@ export interface Database {
           content?: string
           type?: 'script' | 'response' | 'tip' | 'improvement' | 'highlight' | 'drill'
           created_at?: string
+          category?: string
+          rewrite?: string
+          explanation?: string
+          question?: string
+          human_rewrite?: string
         }
       }
       saved_reports: {

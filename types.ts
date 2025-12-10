@@ -61,6 +61,8 @@ export interface SavedItem {
   content: string; // "quote" or "instance"
   rewrite?: string; // Only for improvements
   explanation?: string; // Only for improvements
+  question?: string; // The original interview question (for rehearsal practice)
+  humanRewrite?: string; // AI recommended human-like rewrite for speaking practice
 }
 
 export interface SavedReport {

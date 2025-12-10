@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Home, FileText, Loader2, StopCircle, Volume2, ArrowRightCircle, ChevronLeft, Settings, X, AlertCircle } from 'lucide-react';
 import { ScriptWord, PerformanceReport, SavedItem } from '../types';
 import Teleprompter from '../components/Teleprompter';
@@ -22,9 +23,14 @@ interface TeleprompterViewProps {
 }
 
 const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, onToggleSave, onSaveReport }) => {
+    // Get location state for rehearsal mode
+    const location = useLocation();
+    const rehearsalQuestion = (location.state as any)?.question;
+    const targetAnswer = (location.state as any)?.targetAnswer;
+    
     // State
     const [hasStarted, setHasStarted] = useState(false);
-    const [scriptText, setScriptText] = useState("");
+    const [scriptText, setScriptText] = useState(rehearsalQuestion ? `Question: ${rehearsalQuestion}\n\nYour Answer:\n` : "");
     const [scriptWords, setScriptWords] = useState<ScriptWord[]>([]);
     const [activeWordIndex, setActiveWordIndex] = useState(0);
     const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'paused'>('idle');
@@ -282,6 +288,25 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
                     </div>
                     
                     <div className="bg-white rounded-3xl shadow-xl border border-[#EBE8E0] overflow-hidden flex flex-col flex-1 min-h-[500px]">
+                        {/* Rehearsal Mode Banner */}
+                        {rehearsalQuestion && (
+                            <div className="bg-gold/10 border-b-2 border-gold p-4">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="w-2 h-2 rounded-full bg-gold animate-pulse"></div>
+                                    <span className="text-xs font-bold text-gold uppercase tracking-widest">Rehearsal Mode</span>
+                                </div>
+                                <p className="text-sm text-charcoal font-medium">Practice answering this interview question</p>
+                                {targetAnswer && (
+                                    <details className="mt-3">
+                                        <summary className="text-xs text-gold cursor-pointer hover:text-gold/80 font-bold uppercase tracking-widest">View Target Answer</summary>
+                                        <div className="mt-2 p-3 bg-white/50 rounded-lg text-sm text-charcoal font-serif italic border-l-2 border-gold">
+                                            "{targetAnswer}"
+                                        </div>
+                                    </details>
+                                )}
+                            </div>
+                        )}
+                        
                         <div className="p-4 border-b border-[#E6E6E6] flex justify-between items-center bg-[#FAF9F6]">
                             <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest">
                                 <FileText size={14} /> Script Editor
@@ -291,7 +316,7 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
                                     {isGeneratingTTS ? <Loader2 size={12} className="animate-spin"/> : isPlayingTTS ? <StopCircle size={12}/> : <Volume2 size={12}/>}
                                     {isPlayingTTS ? 'Stop' : 'Listen'}
                                 </button>
-                                <button onClick={() => { setScriptText(""); setScriptWords([]); }} className="text-xs font-bold text-gray-400 hover:text-red-400 uppercase tracking-widest px-3 py-1.5">Clear</button>
+                                <button onClick={() => { setScriptText(rehearsalQuestion ? `Question: ${rehearsalQuestion}\n\nYour Answer:\n` : ""); setScriptWords([]); }} className="text-xs font-bold text-gray-400 hover:text-red-400 uppercase tracking-widest px-3 py-1.5">Clear</button>
                             </div>
                         </div>
                         <textarea className="flex-1 p-8 text-lg font-serif leading-relaxed resize-none outline-none text-charcoal placeholder:text-gray-300" placeholder="Paste speech here..." value={scriptText} onChange={handleScriptChange} />
@@ -350,7 +375,7 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
                         <div className="fixed inset-0 z-50 bg-cream flex flex-col overflow-hidden animate-in fade-in duration-300">
                              <div className="flex-1 overflow-y-auto">
                                 <div className="max-w-4xl mx-auto p-8 pb-32">
-                                    <PerformanceReportComponent report={performanceReport} isSaved={isSaved} onToggleSave={onToggleSave} onDone={(f) => { setPerformanceReport(null); setHasStarted(false); }} />
+                                    <PerformanceReportComponent report={performanceReport} context={scriptText.substring(0, 200)} isSaved={isSaved} onToggleSave={onToggleSave} onDone={(f) => { setPerformanceReport(null); setHasStarted(false); }} />
                                 </div>
                              </div>
                         </div>
