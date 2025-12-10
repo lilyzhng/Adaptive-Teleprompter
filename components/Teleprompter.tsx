@@ -6,6 +6,7 @@ interface TeleprompterProps {
   activeWordIndex: number;
   fontSize: number;
   opacity: number;
+  hasQuestionAbove?: boolean;
 }
 
 const Teleprompter: React.FC<TeleprompterProps> = ({
@@ -13,6 +14,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({
   activeWordIndex,
   fontSize,
   opacity,
+  hasQuestionAbove = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const activeWordRef = useRef<HTMLSpanElement>(null);
@@ -59,7 +61,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0 overflow-y-auto no-scrollbar px-8 py-32 pointer-events-none z-20 text-center"
+      className={`absolute inset-0 overflow-y-auto no-scrollbar px-8 pointer-events-none z-20 text-center ${hasQuestionAbove ? 'pt-72 pb-32' : 'py-32'}`}
       style={{
         // Subtle gradient to ensure text legibility against video
         background: 'linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0) 20%, rgba(0,0,0,0) 80%, rgba(0,0,0,0.1) 100%)'

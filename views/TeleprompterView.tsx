@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Home, FileText, Loader2, StopCircle, Volume2, ArrowRightCircle, ChevronLeft, Settings, X, AlertCircle } from 'lucide-react';
+import { Home, FileText, Loader2, StopCircle, Volume2, ArrowRightCircle, ChevronLeft, Settings, X, AlertCircle, Award, Download, Ear, Mic2 } from 'lucide-react';
 import { ScriptWord, PerformanceReport, SavedItem } from '../types';
 import Teleprompter from '../components/Teleprompter';
 import PerformanceReportComponent from '../components/PerformanceReport';
@@ -31,18 +31,21 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
     
     // State
     const [hasStarted, setHasStarted] = useState(false);
-    const [scriptText, setScriptText] = useState(rehearsalQuestion ? `Question: ${rehearsalQuestion}\n\nImproved Answer:\n${targetAnswer || ''}` : "");
+    const [scriptText, setScriptText] = useState(rehearsalQuestion ? `${targetAnswer || ''}` : "");
     const [scriptWords, setScriptWords] = useState<ScriptWord[]>([]);
     const [activeWordIndex, setActiveWordIndex] = useState(0);
     const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'paused'>('idle');
     const [recordingDuration, setRecordingDuration] = useState(0);
     const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+    const [recordedVideoBlob, setRecordedVideoBlob] = useState<Blob | null>(null);
     
     // Media & TTS
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [permissionError, setPermissionError] = useState<string | null>(null);
     const [isPlayingTTS, setIsPlayingTTS] = useState(false);
     const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
+    const [isPlayingQuestion, setIsPlayingQuestion] = useState(false);
+    const [cachedQuestionAudio, setCachedQuestionAudio] = useState<AudioBuffer | null>(null);
     
     // Analysis
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -69,6 +72,29 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
         onHome(!hasData);
     };
 
+    // Pre-cache question TTS when entering studio
+    const preCacheQuestionTTS = useCallback(async () => {
+        if (!rehearsalQuestion || cachedQuestionAudio) return;
+        try {
+            const base64Audio = await generateTTS(rehearsalQuestion);
+            if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+            if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
+
+            const binaryString = atob(base64Audio);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            
+            const dataInt16 = new Int16Array(bytes.buffer);
+            const buffer = audioContextRef.current.createBuffer(1, dataInt16.length, 24000);
+            const channelData = buffer.getChannelData(0);
+            for(let i=0; i<dataInt16.length; i++) channelData[i] = dataInt16[i]/32768.0;
+
+            setCachedQuestionAudio(buffer);
+        } catch (e) {
+            console.error("Failed to pre-cache question TTS:", e);
+        }
+    }, [rehearsalQuestion, cachedQuestionAudio]);
+
     // --- Init ---
     const initCamera = useCallback(async () => {
         setPermissionError(null);
@@ -93,6 +119,13 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
              stopTTS();
         };
     }, [initCamera]);
+
+    // Pre-cache question TTS when entering studio in rehearsal mode
+    useEffect(() => {
+        if (rehearsalQuestion && hasStarted && !cachedQuestionAudio) {
+            preCacheQuestionTTS();
+        }
+    }, [rehearsalQuestion, hasStarted, cachedQuestionAudio, preCacheQuestionTTS]);
 
     useEffect(() => {
         if (videoRef.current && stream) {
@@ -188,6 +221,7 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
             audioSourceRef.current = null;
         }
         setIsPlayingTTS(false);
+        setIsPlayingQuestion(false);
     };
 
     const playTTS = async () => {
@@ -224,6 +258,47 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
         }
     };
 
+    // Play cached question audio
+    const playCachedQuestion = async (): Promise<void> => {
+        return new Promise((resolve) => {
+            if (!cachedQuestionAudio || isPlayingQuestion) {
+                resolve();
+                return;
+            }
+            
+            try {
+                if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+                if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume();
+
+                const source = audioContextRef.current.createBufferSource();
+                source.buffer = cachedQuestionAudio;
+                source.connect(audioContextRef.current.destination);
+                source.onended = () => { 
+                    setIsPlayingQuestion(false);
+                    audioSourceRef.current = null;
+                    resolve();
+                };
+                audioSourceRef.current = source;
+                source.start();
+                setIsPlayingQuestion(true);
+            } catch (e) {
+                console.error("Failed to play cached question:", e);
+                resolve();
+            }
+        });
+    };
+
+    // Play question as mock interviewer (for manual preview)
+    const playQuestionTTS = async () => {
+        if (cachedQuestionAudio) {
+            await playCachedQuestion();
+        } else {
+            // Fallback if not cached yet
+            await preCacheQuestionTTS();
+            if (cachedQuestionAudio) await playCachedQuestion();
+        }
+    };
+
     // --- Recording ---
     const startRecording = async () => {
         if (!stream) { await initCamera(); if(!streamRef.current) return; }
@@ -231,6 +306,13 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
         setRecordedChunks([]);
         setRecordingDuration(0);
         setPerformanceReport(null);
+        
+        // If in rehearsal mode, play the question first as mock interviewer
+        if (rehearsalQuestion) {
+            await playQuestionTTS();
+            // Wait a brief moment after question ends for natural pause
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
         
         const options = MediaRecorder.isTypeSupported('video/mp4') ? { mimeType: 'video/mp4' } : { mimeType: 'video/webm' };
         const recorder = new MediaRecorder(stream || streamRef.current!, options);
@@ -264,20 +346,41 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
     };
 
     const analyzeRecording = async () => {
-        if (recordedChunks.length === 0) return;
+        if (recordedChunks.length === 0) {
+            console.error("No recorded chunks available");
+            alert("No recording found to analyze.");
+            return;
+        }
         setIsAnalyzing(true);
         try {
             const videoBlob = new Blob(recordedChunks, { type: recordedChunks[0].type });
+            setRecordedVideoBlob(videoBlob); // Store for download
             const base64Audio = await extractAudioFromVideo(videoBlob);
             const report = await analyzeTeleprompterRecording(base64Audio, scriptText);
             setPerformanceReport(report);
             await onSaveReport(scriptText.substring(0, 30) + (scriptText.length > 30 ? "..." : "") || "Rehearsal", 'rehearsal', report);
         } catch (e) {
-            console.error(e);
-            alert("Analysis failed.");
+            console.error("Analysis error:", e);
+            alert("Analysis failed. " + (e as Error).message);
+            setIsAnalyzing(false);
         } finally {
             setIsAnalyzing(false);
         }
+    };
+
+    const downloadRecording = () => {
+        if (!recordedVideoBlob) {
+            alert("No recording available to download.");
+            return;
+        }
+        const url = URL.createObjectURL(recordedVideoBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `rehearsal-${new Date().toISOString().split('T')[0]}-${Date.now()}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     };
 
     return (
@@ -299,11 +402,19 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
                         {/* Rehearsal Mode Banner */}
                         {rehearsalQuestion && (
                             <div className="bg-gold/10 border-b-2 border-gold p-4">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <div className="w-2 h-2 rounded-full bg-gold animate-pulse"></div>
-                                    <span className="text-xs font-bold text-gold uppercase tracking-widest">Rehearsal Mode</span>
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-gold animate-pulse"></div>
+                                        <span className="text-xs font-bold text-gold uppercase tracking-widest">Mock Interview</span>
+                                    </div>
+                                    <button onClick={playQuestionTTS} disabled={isGeneratingTTS || isPlayingQuestion} className="shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest border border-gold/30 hover:bg-gold/10 hover:border-gold transition-all disabled:opacity-50 text-gold">
+                                        {isGeneratingTTS && isPlayingQuestion ? <Loader2 size={12} className="animate-spin"/> : isPlayingQuestion ? <StopCircle size={12}/> : <Volume2 size={12}/>}
+                                        {isPlayingQuestion ? 'Playing' : 'Hear'}
+                                    </button>
                                 </div>
-                                <p className="text-sm text-charcoal font-medium">Practice the improved answer below.</p>
+                                <div className="p-3 bg-white/50 rounded-lg border-l-2 border-gold/50">
+                                    <p className="text-sm text-charcoal italic">"{rehearsalQuestion}"</p>
+                                </div>
                                 {originalAnswer && (
                                     <details className="mt-3">
                                         <summary className="text-xs text-gold cursor-pointer hover:text-gold/80 font-bold uppercase tracking-widest">View Your Past Mistake</summary>
@@ -321,10 +432,10 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
                             </div>
                             <div className="flex gap-2">
                                 <button onClick={playTTS} disabled={isGeneratingTTS || !scriptText.trim()} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest border border-gray-200 hover:bg-white hover:border-gold/50 transition-all disabled:opacity-50">
-                                    {isGeneratingTTS ? <Loader2 size={12} className="animate-spin"/> : isPlayingTTS ? <StopCircle size={12}/> : <Volume2 size={12}/>}
+                                    {isGeneratingTTS && !isPlayingQuestion ? <Loader2 size={12} className="animate-spin"/> : isPlayingTTS ? <StopCircle size={12}/> : <Volume2 size={12}/>}
                                     {isPlayingTTS ? 'Stop' : 'Listen'}
                                 </button>
-                                <button onClick={() => { setScriptText(rehearsalQuestion ? `Question: ${rehearsalQuestion}\n\nImproved Answer:\n${targetAnswer || ''}` : ""); setScriptWords([]); }} className="text-xs font-bold text-gray-400 hover:text-red-400 uppercase tracking-widest px-3 py-1.5">Clear</button>
+                                <button onClick={() => { setScriptText(rehearsalQuestion ? `${targetAnswer || ''}` : ""); setScriptWords([]); }} className="text-xs font-bold text-gray-400 hover:text-red-400 uppercase tracking-widest px-3 py-1.5">Clear</button>
                             </div>
                         </div>
                         <textarea className="flex-1 p-8 text-lg font-serif leading-relaxed resize-none outline-none text-charcoal placeholder:text-gray-300" placeholder="Paste speech here..." value={scriptText} onChange={handleScriptChange} />
@@ -351,7 +462,30 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
                         </div>
                      </div>
                      
-                     <Teleprompter words={scriptWords} activeWordIndex={activeWordIndex} fontSize={fontSize} opacity={opacity} />
+                     {/* Question Display (Top) - Rehearsal Mode */}
+                     {rehearsalQuestion && (
+                        <div className="absolute top-20 left-0 right-0 px-8 z-20">
+                            <div className="max-w-4xl mx-auto bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl p-6">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="w-2 h-2 rounded-full bg-gold"></div>
+                                    <span className="text-[10px] font-bold text-gold uppercase tracking-widest">Question</span>
+                                </div>
+                                <p className="text-white/90 text-lg font-serif leading-relaxed">"{rehearsalQuestion}"</p>
+                            </div>
+                        </div>
+                     )}
+                     
+                     <Teleprompter words={scriptWords} activeWordIndex={activeWordIndex} fontSize={fontSize} opacity={opacity} hasQuestionAbove={!!rehearsalQuestion} />
+
+                     {/* Mock Interviewer Speaking Indicator */}
+                     {isPlayingQuestion && rehearsalQuestion && (
+                        <div className="absolute inset-0 z-25 bg-black/50 backdrop-blur-sm flex items-center justify-center animate-in fade-in pointer-events-none">
+                            <div className="bg-white/10 backdrop-blur-xl border border-gold/30 rounded-2xl px-8 py-4 flex items-center gap-3">
+                                <Volume2 size={20} className="text-gold animate-pulse" />
+                                <span className="text-sm font-bold text-gold uppercase tracking-widest">Mock Interviewer Speaking...</span>
+                            </div>
+                        </div>
+                     )}
 
                      <div className="absolute bottom-0 left-0 right-0 p-10 flex justify-center items-center z-30 bg-gradient-to-t from-black/80 to-transparent">
                         {recordingState === 'idle' ? (
@@ -383,7 +517,91 @@ const TeleprompterView: React.FC<TeleprompterViewProps> = ({ onHome, isSaved, on
                         <div className="fixed inset-0 z-50 bg-cream flex flex-col overflow-hidden animate-in fade-in duration-300">
                              <div className="flex-1 overflow-y-auto">
                                 <div className="max-w-4xl mx-auto p-8 pb-32">
-                                    <PerformanceReportComponent report={performanceReport} context={scriptText.substring(0, 200)} isSaved={isSaved} onToggleSave={onToggleSave} onDone={(f) => { setPerformanceReport(null); setHasStarted(false); }} />
+                                    {/* Header with Download Button */}
+                                    <div className="mb-8 flex items-center justify-between">
+                                        <div>
+                                            <div className="flex items-center gap-2 text-gold text-xs font-bold tracking-widest uppercase mb-2">
+                                                <Award size={14} /> Rehearsal Performance
+                                            </div>
+                                            <h2 className="text-4xl font-serif font-bold text-charcoal">Delivery Report</h2>
+                                        </div>
+                                        <div className="flex gap-3">
+                                            {recordedVideoBlob && (
+                                                <button onClick={downloadRecording} className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm font-medium hover:bg-gray-50 text-charcoal flex items-center gap-2">
+                                                    <Download size={14} /> Download Recording
+                                                </button>
+                                            )}
+                                            <button onClick={() => { setPerformanceReport(null); setHasStarted(false); setRecordedVideoBlob(null); }} className="px-6 py-2 bg-charcoal text-white rounded-full text-sm font-bold hover:bg-black">
+                                                Done
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Executive Summary Card */}
+                                    <div className="bg-white rounded-3xl p-8 shadow-sm border border-[#EBE8E0] mb-8 flex flex-col md:flex-row gap-8 items-start">
+                                        <div className="shrink-0 relative w-32 h-32 flex items-center justify-center">
+                                            <div className="absolute inset-0 rounded-full" style={{ background: `conic-gradient(#C7A965 ${performanceReport.rating}%, #F0EBE0 ${performanceReport.rating}% 100%)` }}></div>
+                                            <div className="absolute inset-2 bg-white rounded-full flex flex-col items-center justify-center z-10">
+                                                <span className="text-4xl font-serif font-bold text-charcoal">{performanceReport.rating}</span>
+                                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">/ 100</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1">
+                                            <h3 className="text-xl font-serif font-bold text-charcoal mb-3">Delivery Summary</h3>
+                                            <p className="text-gray-600 leading-relaxed mb-4">{performanceReport.summary}</p>
+                                            {performanceReport.suggestions && performanceReport.suggestions.length > 0 && (
+                                                <div className="mt-4 bg-gold/5 border-l-2 border-gold p-4 rounded-r-lg">
+                                                    <h4 className="text-xs font-bold text-gold uppercase tracking-widest mb-2">Quick Tips</h4>
+                                                    <ul className="space-y-2">
+                                                        {performanceReport.suggestions.map((tip, i) => (
+                                                            <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
+                                                                <span className="text-gold">•</span>
+                                                                <span>{tip}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Pronunciation & Delivery Drills */}
+                                    {performanceReport.pronunciationFeedback && performanceReport.pronunciationFeedback.length > 0 && (
+                                        <div className="bg-white rounded-3xl p-8 border border-[#EBE8E0] shadow-sm">
+                                            <div className="mb-4 flex items-center gap-2 text-charcoal text-sm font-bold tracking-widest uppercase">
+                                                <Ear size={16} /> Delivery Drills
+                                            </div>
+                                            <p className="text-gray-600 mb-6 text-sm">Practice these to improve your delivery:</p>
+                                            <div className="grid gap-6">
+                                                {performanceReport.pronunciationFeedback.map((drill, i) => (
+                                                    <div key={i} className="flex flex-col gap-4 p-6 rounded-2xl border border-gray-100 bg-[#FAF9F6]">
+                                                        <div className="flex flex-col md:flex-row gap-6">
+                                                            <div className="md:w-1/3">
+                                                                <div className="flex items-center gap-2 mb-2 text-red-500">
+                                                                    <AlertCircle size={14} />
+                                                                    <span className="text-[10px] font-bold uppercase tracking-widest">Issue</span>
+                                                                </div>
+                                                                <h5 className="font-bold text-charcoal mb-1">{drill.issue}</h5>
+                                                                <p className="text-sm text-gray-500 italic">"{drill.phrase}"</p>
+                                                            </div>
+                                                            <div className="flex-1 bg-white p-6 rounded-xl border border-gold/20 shadow-sm">
+                                                                <div className="flex items-center gap-2 mb-3 text-gold">
+                                                                    <Mic2 size={14} />
+                                                                    <span className="text-[10px] font-bold uppercase tracking-widest">Practice This</span>
+                                                                </div>
+                                                                <div className="font-serif text-xl text-charcoal tracking-wide mb-3 leading-relaxed">
+                                                                    {drill.practiceDrill}
+                                                                </div>
+                                                                <p className="text-xs text-gray-500 border-t border-gray-100 pt-3">
+                                                                    <span className="font-bold">Why:</span> {drill.reason}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                              </div>
                         </div>
