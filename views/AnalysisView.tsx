@@ -13,6 +13,76 @@ interface AnalysisViewProps {
     onSaveReport: (title: string, type: 'coach' | 'rehearsal', report: PerformanceReport) => void;
 }
 
+// Type for persisted file info (without base64 to keep it small)
+interface PersistedFileInfo {
+    name: string;
+    size: number;
+    type: string;
+}
+
+type StoredAudioRecord = {
+    blob: Blob;
+    info: PersistedFileInfo;
+    savedAt: number;
+};
+
+const COACH_AUDIO_DB = 'micdrop_coach_audio_v1';
+const COACH_AUDIO_STORE = 'audio';
+const COACH_AUDIO_KEY = 'current';
+
+const openCoachAudioDB = (): Promise<IDBDatabase> => {
+    return new Promise((resolve, reject) => {
+        if (!('indexedDB' in window)) {
+            reject(new Error('IndexedDB not available'));
+            return;
+        }
+        const req = indexedDB.open(COACH_AUDIO_DB, 1);
+        req.onerror = () => reject(req.error || new Error('Failed to open IndexedDB'));
+        req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(COACH_AUDIO_STORE)) {
+                db.createObjectStore(COACH_AUDIO_STORE);
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+    });
+};
+
+const idbGetCoachAudio = async (): Promise<StoredAudioRecord | null> => {
+    const db = await openCoachAudioDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(COACH_AUDIO_STORE, 'readonly');
+        const store = tx.objectStore(COACH_AUDIO_STORE);
+        const req = store.get(COACH_AUDIO_KEY);
+        req.onerror = () => reject(req.error || new Error('Failed to read audio from IndexedDB'));
+        req.onsuccess = () => resolve((req.result as StoredAudioRecord | undefined) ?? null);
+    });
+};
+
+const idbSetCoachAudio = async (record: StoredAudioRecord): Promise<void> => {
+    const db = await openCoachAudioDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(COACH_AUDIO_STORE, 'readwrite');
+        const store = tx.objectStore(COACH_AUDIO_STORE);
+        const req = store.put(record, COACH_AUDIO_KEY);
+        req.onerror = () => reject(req.error || new Error('Failed to write audio to IndexedDB'));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('Failed to write audio to IndexedDB'));
+    });
+};
+
+const idbClearCoachAudio = async (): Promise<void> => {
+    const db = await openCoachAudioDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(COACH_AUDIO_STORE, 'readwrite');
+        const store = tx.objectStore(COACH_AUDIO_STORE);
+        const req = store.delete(COACH_AUDIO_KEY);
+        req.onerror = () => reject(req.error || new Error('Failed to clear audio from IndexedDB'));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('Failed to clear audio from IndexedDB'));
+    });
+};
+
 const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSave, onSaveReport }) => {
     // Local State with session storage persistence
     const [uploadContext, setUploadContext] = useState(() => {
@@ -29,8 +99,21 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
             return "";
         }
     });
+    
+    // File selection state
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
-    const [uploadedAudioBase64, setUploadedAudioBase64] = useState<string | null>(null);
+    const [persistedAudioBlob, setPersistedAudioBlob] = useState<Blob | null>(null);
+    const [persistedFileInfo, setPersistedFileInfo] = useState<PersistedFileInfo | null>(() => {
+        try {
+            const stored = sessionStorage.getItem('coach_fileInfo');
+            if (stored) {
+                return JSON.parse(stored);
+            }
+        } catch (e) {
+            console.error("Failed to read fileInfo from sessionStorage", e);
+        }
+        return null;
+    });
 
     // Process State
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -57,18 +140,40 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
         }
     }, [manualTranscript]);
 
-    // Clear session storage when analysis is complete or user goes home
+    // Rehydrate selected audio from IndexedDB (survives reloads/tab discards/navigation).
+    React.useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const record = await idbGetCoachAudio();
+                if (cancelled) return;
+                if (record?.blob) {
+                    setPersistedAudioBlob(record.blob);
+                    setPersistedFileInfo(record.info);
+                }
+            } catch (e) {
+                // Silent: IndexedDB may be unavailable in some environments (private mode, strict settings).
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    // Clear session storage and window cache when analysis is complete or user goes home
     const clearSessionData = () => {
+        // Clear persisted audio
+        setPersistedAudioBlob(null);
         try {
             sessionStorage.removeItem('coach_uploadContext');
             sessionStorage.removeItem('coach_manualTranscript');
+            sessionStorage.removeItem('coach_fileInfo');
         } catch (e) {
             console.error('Failed to clear session storage', e);
         }
+        idbClearCoachAudio().catch(() => {});
     };
 
     const handleHomeClick = () => {
-        const hasData = !!(selectedFile || manualTranscript.trim() || uploadContext.trim() || transcriptionResult || performanceReport);
+        const hasData = !!(selectedFile || persistedFileInfo || manualTranscript.trim() || uploadContext.trim() || transcriptionResult || performanceReport);
         if (hasData && !performanceReport) {
             if (!window.confirm("Are you sure you want to go back? Current progress will be lost.")) return;
         }
@@ -76,86 +181,98 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
         onHome(true);
     };
 
-    const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file) {
             setSelectedFile(file);
+            setPersistedAudioBlob(file);
+            
+            const fileInfo: PersistedFileInfo = {
+                name: file.name,
+                size: file.size,
+                type: file.type
+            };
+            setPersistedFileInfo(fileInfo);
+
+            // Persist metadata immediately (sync-ish) so quick reloads still keep filename/state.
+            try {
+                sessionStorage.setItem('coach_fileInfo', JSON.stringify(fileInfo));
+            } catch (e) {
+                // ignore
+            }
+
+            // Persist the actual blob to IndexedDB so switching tabs/windows/routes doesn't lose it.
+            idbSetCoachAudio({ blob: file, info: fileInfo, savedAt: Date.now() }).catch(() => {});
         }
     };
 
     const startUnifiedAnalysis = async () => {
-        if (!selectedFile && !manualTranscript.trim()) {
+        const audioBlob = selectedFile ?? persistedAudioBlob;
+        const hasAudioData = !!audioBlob;
+        
+        if (!hasAudioData && !manualTranscript.trim()) {
             alert("Please upload an audio file or paste a transcript.");
             return;
         }
 
-        // Increased limit to 50MB as requested
-        if (selectedFile && selectedFile.size > 50 * 1024 * 1024) {
+        // Check file size - use persisted info if actual file is not available
+        const fileSize = selectedFile?.size ?? persistedFileInfo?.size ?? persistedAudioBlob?.size ?? 0;
+        if (hasAudioData && fileSize > 50 * 1024 * 1024) {
              alert("File is too large. Please use a file smaller than 50MB.");
              return;
         }
 
         setIsAnalyzing(true);
-        console.log("🚀 Starting analysis...");
         try {
-            let base64Audio = null;
+            let base64Audio: string | null = null;
             let mimeType = 'audio/mp3';
 
-            if (selectedFile) {
-                console.log("📁 Reading file:", selectedFile.name, selectedFile.size, "bytes");
-                base64Audio = await new Promise<string>((resolve, reject) => {
+            const blobToBase64 = (blob: Blob): Promise<string> => {
+                return new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = () => resolve((reader.result as string).split(',')[1]);
                     reader.onerror = reject;
-                    reader.readAsDataURL(selectedFile);
+                    reader.readAsDataURL(blob);
                 });
-                setUploadedAudioBase64(base64Audio);
-                mimeType = getAudioMimeType(selectedFile);
-                console.log("✅ File loaded, MIME type:", mimeType);
+            };
+
+            if (audioBlob) {
+                base64Audio = await blobToBase64(audioBlob);
+                const fileName = selectedFile?.name ?? persistedFileInfo?.name ?? 'audio.mp3';
+                const fallbackMime = getAudioMimeType({ name: fileName } as File);
+                mimeType = selectedFile?.type || persistedFileInfo?.type || fallbackMime;
             }
 
             // LOGIC BRANCHING
             
             // Path A: Manual Transcript provided -> Skip Stage 1, Go straight to Stage 2
             if (manualTranscript.trim()) {
-                console.log("📝 Path A: Using manual transcript");
                 setAnalysisStep('analyzing');
                 setTranscriptionResult(manualTranscript); // Treat manual as the result
                 
-                console.log("🤖 Calling Stage 2 (Coach)...");
                 const report = await analyzeStage2_Coach(base64Audio, manualTranscript, uploadContext, mimeType);
-                console.log("✅ Stage 2 complete, report:", report);
                 setPerformanceReport(report);
-                console.log("💾 Saving report to database...");
                 await onSaveReport(uploadContext || "Coach Session", 'coach', report);
-                console.log("✅ Report saved successfully");
                 clearSessionData();
             } 
             // Path B: Audio Only -> Run Stage 1 (Transcribe) -> Automatically Run Stage 2 (Coach)
             else if (base64Audio) {
-                console.log("🎤 Path B: Audio analysis (2 stages)");
                 // Phase 1: Transcribe
                 setAnalysisStep('transcribing');
-                console.log("📝 Starting Stage 1 (Transcribe)...");
                 const transcript = await analyzeStage1_Transcribe(base64Audio, mimeType, uploadContext);
-                console.log("✅ Stage 1 complete, transcript length:", transcript.length);
                 setTranscriptionResult(transcript);
 
                 // Phase 2: Coach (Automatic Transition)
                 setAnalysisStep('analyzing');
-                console.log("🤖 Starting Stage 2 (Coach)...");
                 const report = await analyzeStage2_Coach(base64Audio, transcript, uploadContext, mimeType);
-                console.log("✅ Stage 2 complete, report:", report);
                 
                 // Set report FIRST before saving
                 setPerformanceReport(report);
                 
                 // Wait a tick to ensure state is updated
                 await new Promise(resolve => setTimeout(resolve, 0));
-                console.log("💾 Saving report to database...");
                 
                 await onSaveReport(uploadContext || "Coach Session", 'coach', report);
-                console.log("✅ Report saved successfully");
                 clearSessionData();
             } else {
                 throw new Error("No input provided");
@@ -163,12 +280,6 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
 
         } catch (error: any) {
             console.error("❌ Analysis failed:", error);
-            console.error("Error details:", {
-                message: error?.message,
-                stack: error?.stack,
-                type: typeof error,
-                fullError: error
-            });
             
             let errorMessage = "Unknown error";
             if (error instanceof Error) {
@@ -188,7 +299,6 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                 errorMessage = "Network Error: The file may be too large for the connection or API limits. Please try a smaller file (under 50MB).";
             }
 
-            console.error("❌ Final error message:", errorMessage);
             alert(`Analysis failed. ${errorMessage}`);
             
             // Only reset state on error
@@ -198,7 +308,6 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
         
         // On success, only reset analyzing state (keep the report!)
         if (performanceReport) {
-            console.log("🔄 Analysis complete, keeping report");
             setIsAnalyzing(false);
             setAnalysisStep('idle');
         }
@@ -218,13 +327,9 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
 
     // Debug logging
     React.useEffect(() => {
-        console.log("🎨 State changed:", {
-            isAnalyzing,
-            analysisStep,
-            hasPerformanceReport: !!performanceReport,
-            hasTranscript: !!transcriptionResult
-        });
-    }, [isAnalyzing, analysisStep, performanceReport, transcriptionResult]);
+        // Intentionally minimal in prod; keep for local debugging if needed.
+        // console.log("Coach state changed", { isAnalyzing, analysisStep });
+    }, [isAnalyzing, analysisStep, performanceReport, transcriptionResult, selectedFile, persistedFileInfo, persistedAudioBlob]);
 
     return (
       <div className="h-full bg-cream text-charcoal flex flex-col font-sans overflow-hidden">
@@ -290,17 +395,32 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
 
                                 <div 
                                     onClick={() => fileInputRef.current?.click()}
-                                    className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all ${selectedFile ? 'border-green-400 bg-green-50/50' : 'border-gray-200 hover:border-gold/50 hover:bg-gray-50'}`}
+                                    className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all ${(selectedFile || persistedAudioBlob) ? 'border-green-400 bg-green-50/50' : 'border-gray-200 hover:border-gold/50 hover:bg-gray-50'}`}
                                 >
                                     <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
-                                    {selectedFile ? (
+                                    {(selectedFile || persistedAudioBlob || persistedFileInfo) ? (
                                         <>
                                             <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center text-green-600 shadow-sm">
                                                 <Check size={28} />
                                             </div>
                                             <div className="text-center">
-                                                <span className="block text-lg font-bold text-green-800 break-all">{selectedFile.name}</span>
+                                                <span className="block text-lg font-bold text-green-800 break-all">{selectedFile?.name ?? persistedFileInfo?.name}</span>
                                                 <span className="text-xs text-green-600 uppercase tracking-widest font-bold mt-1">Ready to Analyze</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSelectedFile(null);
+                                                        setPersistedAudioBlob(null);
+                                                        setPersistedFileInfo(null);
+                                                        try { sessionStorage.removeItem('coach_fileInfo'); } catch {}
+                                                        idbClearCoachAudio().catch(() => {});
+                                                        if (fileInputRef.current) fileInputRef.current.value = '';
+                                                    }}
+                                                    className="mt-3 text-[10px] font-bold uppercase tracking-widest text-green-700/70 hover:text-red-500 transition-colors"
+                                                >
+                                                    Clear audio
+                                                </button>
                                             </div>
                                         </>
                                     ) : (
@@ -317,7 +437,7 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                                 </div>
 
                                 {/* Unified Action Button */}
-                                {(selectedFile || manualTranscript.trim()) && (
+                                {(selectedFile || persistedAudioBlob || manualTranscript.trim()) && (
                                     <button 
                                         onClick={startUnifiedAnalysis}
                                         className="w-full py-4 bg-charcoal text-white rounded-xl font-bold hover:bg-black transition-colors shadow-lg flex items-center justify-center gap-2"

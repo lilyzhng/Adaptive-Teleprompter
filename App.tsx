@@ -184,7 +184,7 @@ const MainApp: React.FC = () => {
       navigate('/');
   };
 
-  if (isLoading || isLoadingData) {
+    if (isLoading) {
       return <div className="h-screen w-screen bg-cream flex items-center justify-center">
           <div className="text-charcoal">Loading...</div>
       </div>;
