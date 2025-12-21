@@ -94,6 +94,7 @@ export interface HotTakeQuestion {
   title: string;
   context: string;
   probingPrompt: string;
+  source?: string; // Optional source tag (e.g., "Augment Code Interview")
 }
 
 export interface PerformanceReport {

@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ChevronRight, ArrowLeft, Edit2, Check, X, Play } from 'lucide-react';
-import { SavedItem, SavedReport, PerformanceReport } from '../types';
+import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play } from 'lucide-react';
+import { SavedItem, SavedReport } from '../types';
 import PerformanceReportComponent from '../components/PerformanceReport';
 import { titleToSlug, findReportBySlug } from '../utils';
 
@@ -261,6 +261,8 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                  // Extract data from reportData for backward compatibility
                                                  const questionText = item.question || item.reportData?.context;
                                                  const humanRewriteText = item.humanRewrite || item.rewrite;
+                                                 // Source is derived from the report context (e.g., "Augment Code Interview")
+                                                 const sourceText = item.reportData?.context || item.category;
                                                  
                                                  return (
                                                 <div key={item.id} className="bg-white rounded-2xl p-8 shadow-sm border border-[#EBE8E0] relative group">
@@ -313,10 +315,18 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                     {/* Rehearse Button */}
                                                     {questionText && (
                                                         <button 
-                                                            onClick={() => alert("Rehearsal module coming soon!")}
+                                                            onClick={() => navigate('/hot-take', { 
+                                                                state: { 
+                                                                    practiceQuestion: { 
+                                                                        title: questionText, 
+                                                                        context: humanRewriteText || item.content,
+                                                                        source: sourceText
+                                                                    } 
+                                                                } 
+                                                            })}
                                                             className="w-full py-3 bg-gold text-white rounded-xl font-bold hover:bg-gold/90 transition-colors shadow-sm flex items-center justify-center gap-2"
                                                         >
-                                                            <Play size={16} /> Start Rehearsal with This Question
+                                                            <Play size={16} /> Practice in Hot Take
                                                         </button>
                                                     )}
                                                 </div>

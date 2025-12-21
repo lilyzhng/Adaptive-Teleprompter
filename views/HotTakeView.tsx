@@ -85,13 +85,43 @@ const HotTakeView: React.FC<HotTakeViewProps> = ({ onHome, onSaveReport, isSaved
 
   const [newQuestion, setNewQuestion] = useState({ title: '', context: '' });
   const [selectedQuestion, setSelectedQuestion] = useState<HotTakeQuestion | null>(null);
+  const processedPracticeRef = useRef<string | null>(null);
 
   // Check for incoming practice request
   useEffect(() => {
     if (location.state && (location.state as any).practiceQuestion) {
-      const { title, context } = (location.state as any).practiceQuestion;
-      setNewQuestion({ title, context });
-      setStep('add_custom');
+      const { title, context, source } = (location.state as any).practiceQuestion;
+      
+      // Prevent processing the same question twice (React StrictMode, re-renders, etc.)
+      const questionKey = `${title}::${context}`;
+      if (processedPracticeRef.current === questionKey) {
+        return;
+      }
+      processedPracticeRef.current = questionKey;
+      
+      // Create a question object with source
+      const practiceQ: HotTakeQuestion = {
+        id: 'practice_' + Date.now(),
+        title: title,
+        context: context,
+        probingPrompt: 'Probe the core logic, values, and outcomes of this story. Focus on impact and specifics.',
+        source: source || undefined
+      };
+      
+      // Check if this question already exists (by title) to avoid duplicates
+      setCustomQuestions(prev => {
+        const exists = prev.some(q => q.title === title);
+        if (exists) {
+          return prev;
+        }
+        return [practiceQ, ...prev];
+      });
+      
+      setSelectedQuestion(practiceQ);
+      setSessionMode('initial');
+      setSessionHistory([]);
+      setStep('session');
+      
       // Clear state so it doesn't persist on reload/nav
       window.history.replaceState({}, document.title);
     }
@@ -340,7 +370,8 @@ const HotTakeView: React.FC<HotTakeViewProps> = ({ onHome, onSaveReport, isSaved
 
   const deleteCustomQuestion = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    setCustomQuestions(customQuestions.filter(q => q.id !== id));
+    e.preventDefault();
+    setCustomQuestions(prev => prev.filter(q => q.id !== id));
   };
 
   const handleSaveProtocolIntelligence = () => {
@@ -447,22 +478,37 @@ const HotTakeView: React.FC<HotTakeViewProps> = ({ onHome, onSaveReport, isSaved
                 ))}
 
                 {customQuestions.map((q) => (
-                  <button 
+                  <div 
                     key={q.id}
                     onClick={() => { setSelectedQuestion(q); setSessionMode('initial'); setSessionHistory([]); setStep('session'); }}
-                    className="bg-white border border-gold/20 p-8 rounded-3xl text-left hover:border-gold hover:shadow-xl transition-all group relative overflow-hidden ring-1 ring-gold/5 animate-in fade-in slide-in-from-bottom-4"
+                    className="bg-white border border-gold/20 p-8 rounded-3xl text-left hover:border-gold hover:shadow-xl transition-all group relative overflow-hidden ring-1 ring-gold/5 animate-in fade-in slide-in-from-bottom-4 cursor-pointer"
                   >
-                    <div className="absolute top-0 right-0 p-4 opacity-10 text-gold group-hover:opacity-20 transition-opacity"><Star size={60} /></div>
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="text-[10px] font-bold text-gold uppercase tracking-widest">Custom Story</div>
-                      <button onClick={(e) => deleteCustomQuestion(e, q.id)} className="text-gray-300 hover:text-red-400 p-1"><X size={14} /></button>
+                    <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity pointer-events-none"><Star size={60} /></div>
+                    <div className="flex items-center gap-2 mb-2">
+                      {q.source && (
+                        <span className="text-[9px] font-bold text-white bg-charcoal px-2 py-0.5 rounded-full uppercase tracking-widest flex items-center gap-1">
+                          <Building2 size={10} /> {q.source}
+                        </span>
+                      )}
+                      {!q.source && (
+                        <span className="text-[10px] font-bold text-gold uppercase tracking-widest">Custom Story</span>
+                      )}
                     </div>
                     <h3 className="text-xl font-serif font-bold mb-3 pr-8">{q.title}</h3>
                     <p className="text-sm text-gray-500 leading-relaxed mb-6 italic line-clamp-2">"{q.context}"</p>
-                    <div className="flex items-center gap-2 text-gold font-bold text-[10px] uppercase tracking-widest">
-                      Enter Sparring <ArrowUpRight size={14} />
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-gold font-bold text-[10px] uppercase tracking-widest">
+                        Enter Sparring <ArrowUpRight size={14} />
+                      </div>
+                      <button 
+                        onClick={(e) => deleteCustomQuestion(e, q.id)} 
+                        className="text-gray-300 hover:text-red-400 p-2 rounded-full hover:bg-red-50 transition-all z-10"
+                        title="Delete question"
+                      >
+                        <X size={16} />
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 ))}
 
                 <button 

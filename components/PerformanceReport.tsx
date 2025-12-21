@@ -313,7 +313,8 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
                                     state: { 
                                         practiceQuestion: { 
                                             title: item.question || item.issue, 
-                                            context: item.question ? `Practice improving: ${item.issue}` : item.instance 
+                                            context: item.question ? `Practice improving: ${item.issue}` : item.instance,
+                                            source: context
                                         } 
                                     } 
                                 })}
