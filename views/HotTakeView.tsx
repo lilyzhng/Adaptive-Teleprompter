@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Home, ArrowLeft, Mic, StopCircle, Zap, Loader2, Trophy, Timer, MessageSquare, Star, ArrowUpRight, Plus, X, BookOpen, Settings, Building2, UserCircle2, Target, ThumbsUp, ThumbsDown, Save, SkipForward } from 'lucide-react';
 import { HotTakeQuestion, PerformanceReport, SavedItem, HotTakeTurn, HotTakeGlobalContext, HotTakePreference } from '../types';
 import { evaluateHotTakeInitial, finalizeHotTake, refineHotTakeTranscript, customizeHotTakeQuestions, regenerateHotTakeFollowUp } from '../services/analysisService';
@@ -53,6 +54,7 @@ const BASE_QUESTIONS: HotTakeQuestion[] = [
 ];
 
 const HotTakeView: React.FC<HotTakeViewProps> = ({ onHome, onSaveReport, isSaved, onToggleSave }) => {
+  const location = useLocation();
   const [step, setStep] = useState<'selection' | 'add_custom' | 'session' | 'analyzing' | 'reveal' | 'context_config'>('selection');
   const [sessionMode, setSessionMode] = useState<'initial' | 'probing'>('initial');
   const [isCustomizingQuestions, setIsCustomizingQuestions] = useState(false);
@@ -83,6 +85,17 @@ const HotTakeView: React.FC<HotTakeViewProps> = ({ onHome, onSaveReport, isSaved
 
   const [newQuestion, setNewQuestion] = useState({ title: '', context: '' });
   const [selectedQuestion, setSelectedQuestion] = useState<HotTakeQuestion | null>(null);
+
+  // Check for incoming practice request
+  useEffect(() => {
+    if (location.state && (location.state as any).practiceQuestion) {
+      const { title, context } = (location.state as any).practiceQuestion;
+      setNewQuestion({ title, context });
+      setStep('add_custom');
+      // Clear state so it doesn't persist on reload/nav
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(90); 
   const [rawTranscript, setRawTranscript] = useState("");

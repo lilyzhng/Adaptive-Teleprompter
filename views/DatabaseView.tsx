@@ -30,7 +30,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
     selectedReportSlug
 }) => {
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState<'reports' | 'rehearsals' | 'snippets'>('reports');
+    const [activeTab, setActiveTab] = useState<'reports' | 'snippets'>('reports');
     const selectedReport = selectedReportSlug ? findReportBySlug(savedReports, selectedReportSlug) : null;
     
     // Edit State
@@ -115,12 +115,6 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                     className={`px-8 py-4 text-sm font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'reports' ? 'border-gold text-charcoal' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
                  >
                     Full Reports
-                 </button>
-                 <button 
-                    onClick={() => setActiveTab('rehearsals')}
-                    className={`px-8 py-4 text-sm font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'rehearsals' ? 'border-gold text-charcoal' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
-                 >
-                    Rehearsal Reports
                  </button>
                  <button 
                     onClick={() => setActiveTab('snippets')}
@@ -241,188 +235,6 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                          )
                      )}
 
-                     {/* --- REHEARSAL REPORTS TAB (Grouped by Question) --- */}
-                     {activeTab === 'rehearsals' && (() => {
-                         const rehearsalReports = savedReports.filter(r => r.type === 'rehearsal');
-                         
-                         // Group reports by title (question)
-                         const groupedReports = rehearsalReports.reduce((acc, report) => {
-                             if (!acc[report.title]) {
-                                 acc[report.title] = [];
-                             }
-                             acc[report.title].push(report);
-                             return acc;
-                         }, {} as Record<string, SavedReport[]>);
-                         
-                         // Sort each group by date (newest first) and sort groups by most recent attempt
-                         Object.keys(groupedReports).forEach(key => {
-                             groupedReports[key].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                         });
-                         const sortedQuestions = Object.keys(groupedReports).sort((a, b) => {
-                             const aNewest = new Date(groupedReports[a][0].date).getTime();
-                             const bNewest = new Date(groupedReports[b][0].date).getTime();
-                             return bNewest - aNewest;
-                         });
-                         
-                         return rehearsalReports.length === 0 ? (
-                            <div className="text-center py-20">
-                                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6 text-gray-400">
-                                    <Mic2 size={32} />
-                                </div>
-                                <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">No Rehearsal Reports</h3>
-                                <p className="text-gray-500 max-w-sm mx-auto">
-                                    Your rehearsal delivery reports will appear here automatically after you practice in the Rehearsal Studio.
-                                </p>
-                            </div>
-                         ) : (
-                             <div className="space-y-8">
-                                 {sortedQuestions.map((questionTitle) => {
-                                     const attempts = groupedReports[questionTitle];
-                                     const bestScore = Math.max(...attempts.map(a => a.rating));
-                                     const latestScore = attempts[0].rating;
-                                     const improvement = latestScore - attempts[attempts.length - 1].rating;
-                                     
-                                     return (
-                                         <div key={questionTitle} className="bg-white rounded-2xl shadow-sm border border-[#EBE8E0] overflow-hidden">
-                                             {/* Question Header */}
-                                             <div className="bg-gold/5 border-b border-gold/20 p-6">
-                                                 <div className="flex items-start justify-between gap-4 mb-3">
-                                                     <div className="flex-1">
-                                                         <div className="flex items-center gap-2 mb-2">
-                                                             <Mic2 size={14} className="text-gold" />
-                                                             <span className="text-[10px] font-bold text-gold uppercase tracking-widest">Interview Question</span>
-                                                         </div>
-                                                         <h3 className="text-xl font-serif font-bold text-charcoal leading-relaxed">"{questionTitle}"</h3>
-                                                     </div>
-                                                 </div>
-                                                 
-                                                 {/* Stats Row */}
-                                                 <div className="flex items-center gap-6 mt-4 text-sm">
-                                                     <div className="flex items-center gap-2">
-                                                         <span className="text-gray-500">Attempts:</span>
-                                                         <span className="font-bold text-charcoal">{attempts.length}</span>
-                                                     </div>
-                                                     <div className="flex items-center gap-2">
-                                                         <span className="text-gray-500">Best Score:</span>
-                                                         <span className="font-bold text-gold">{bestScore}</span>
-                                                     </div>
-                                                     <div className="flex items-center gap-2">
-                                                         <span className="text-gray-500">Latest:</span>
-                                                         <span className="font-bold text-charcoal">{latestScore}</span>
-                                                     </div>
-                                                     {attempts.length > 1 && (
-                                                         <div className="flex items-center gap-2">
-                                                             <span className="text-gray-500">Progress:</span>
-                                                             <span className={`font-bold ${improvement >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                 {improvement >= 0 ? '+' : ''}{improvement}
-                                                             </span>
-                                                         </div>
-                                                     )}
-                                                 </div>
-                                             </div>
-                                             
-                                             {/* Attempts List */}
-                                             <div className="divide-y divide-gray-100">
-                                                 {attempts.map((report, index) => {
-                                                     const isEditing = editingReportId === report.id;
-                                                     return (
-                                                         <div key={report.id} className="p-4 hover:bg-gray-50 transition-colors flex items-center gap-4 group">
-                                                             {/* Score */}
-                                                             <div className="shrink-0 relative w-14 h-14 flex items-center justify-center">
-                                                                 <div className="absolute inset-0 rounded-full" style={{ background: `conic-gradient(#C7A965 ${report.rating}%, #F0EBE0 ${report.rating}% 100%)` }}></div>
-                                                                 <div className="absolute inset-1 bg-white rounded-full flex items-center justify-center z-10">
-                                                                     <span className="text-sm font-serif font-bold text-charcoal">{report.rating}</span>
-                                                                 </div>
-                                                             </div>
-                                                             
-                                                             {/* Attempt Info */}
-                                                             <div className="flex-1 min-w-0">
-                                                                 <div className="flex items-center gap-2">
-                                                                     <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-                                                                         Attempt #{attempts.length - index}
-                                                                     </span>
-                                                                     {index === 0 && (
-                                                                         <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-gold/10 text-gold">
-                                                                             Latest
-                                                                         </span>
-                                                                     )}
-                                                                     {report.rating === bestScore && (
-                                                                         <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-green-50 text-green-600">
-                                                                             Best
-                                                                         </span>
-                                                                     )}
-                                                                 </div>
-                                                                 <div className="flex items-center gap-2 mt-1">
-                                                                     {isEditing ? (
-                                                                         <input 
-                                                                             type="date"
-                                                                             value={editForm.date}
-                                                                             onChange={(e) => setEditForm({...editForm, date: e.target.value})}
-                                                                             className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-0.5 focus:border-gold outline-none"
-                                                                         />
-                                                                     ) : (
-                                                                         <span className="text-sm text-gray-500 flex items-center gap-1">
-                                                                             <Calendar size={12} /> {new Date(report.date).toLocaleDateString()} at {new Date(report.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                                                         </span>
-                                                                     )}
-                                                                 </div>
-                                                             </div>
-                                                             
-                                                             {/* Actions */}
-                                                             <div className={`flex items-center gap-2 transition-opacity ${isEditing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                                                                 {isEditing ? (
-                                                                     <>
-                                                                         <button 
-                                                                             onClick={() => saveEditing(report.id)}
-                                                                             className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors"
-                                                                             title="Save Changes"
-                                                                         >
-                                                                             <Check size={14} />
-                                                                         </button>
-                                                                         <button 
-                                                                             onClick={cancelEditing}
-                                                                             className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
-                                                                             title="Cancel"
-                                                                         >
-                                                                             <X size={14} />
-                                                                         </button>
-                                                                     </>
-                                                                 ) : (
-                                                                     <>
-                                                                         <button 
-                                                                             onClick={() => startEditing(report)}
-                                                                             className="p-2 text-gray-300 hover:text-gold transition-colors"
-                                                                             title="Edit Date"
-                                                                         >
-                                                                             <Edit2 size={14} />
-                                                                         </button>
-                                                                         <button 
-                                                                             onClick={() => navigate(`/report/${titleToSlug(report.title)}`)}
-                                                                             className="px-3 py-1.5 bg-charcoal text-white rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-black transition-colors"
-                                                                         >
-                                                                             View
-                                                                         </button>
-                                                                         <button 
-                                                                             onClick={(e) => { e.stopPropagation(); onDeleteReport(report.id); }}
-                                                                             className="p-2 text-gray-300 hover:text-red-400 transition-colors"
-                                                                             title="Delete Report"
-                                                                         >
-                                                                             <Trash2 size={14} />
-                                                                         </button>
-                                                                     </>
-                                                                 )}
-                                                             </div>
-                                                         </div>
-                                                     );
-                                                 })}
-                                             </div>
-                                         </div>
-                                     );
-                                 })}
-                             </div>
-                         );
-                     })()}
-
                      {/* --- SNIPPETS TAB --- */}
                      {activeTab === 'snippets' && (
                          savedItems.length === 0 ? (
@@ -501,11 +313,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                     {/* Rehearse Button */}
                                                     {questionText && (
                                                         <button 
-                                                            onClick={() => navigate('/teleprompter', { state: { 
-                                                                question: questionText, 
-                                                                targetAnswer: humanRewriteText,
-                                                                originalAnswer: item.content 
-                                                            }})}
+                                                            onClick={() => alert("Rehearsal module coming soon!")}
                                                             className="w-full py-3 bg-gold text-white rounded-xl font-bold hover:bg-gold/90 transition-colors shadow-sm flex items-center justify-center gap-2"
                                                         >
                                                             <Play size={16} /> Start Rehearsal with This Question

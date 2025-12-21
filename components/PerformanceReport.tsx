@@ -1,5 +1,6 @@
 
 import React, { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Download, Award, PenTool, Quote, Lightbulb, Bookmark, ThumbsUp, Star, Ear, AlertCircle, Mic2, FileText, MessageCircleQuestion, Target, Sparkles, Zap, History, MessageSquare } from 'lucide-react';
 import { PerformanceReport as ReportType, SavedItem } from '../types';
 import html2canvas from 'html2canvas';
@@ -25,6 +26,7 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
     const [showRewrite, setShowRewrite] = useState(false);
     const [activeHotTakeRound, setActiveHotTakeRound] = useState<'round1' | 'round2'>('round1');
     const reportRef = useRef<HTMLDivElement>(null);
+    const navigate = useNavigate();
 
     // Helper to determine report type based on content
     const isHotTake = !!hotTakeRubric || !!hotTakeRounds;
@@ -303,6 +305,22 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
                                 title={saved ? "Remove from database" : "Save to database"}
                             >
                                 <Bookmark size={18} fill={saved ? "currentColor" : "none"} />
+                            </button>
+                            
+                            {/* Practice Button */}
+                            <button 
+                                onClick={() => navigate('/hot-take', { 
+                                    state: { 
+                                        practiceQuestion: { 
+                                            title: item.question || item.issue, 
+                                            context: item.question ? `Practice improving: ${item.issue}` : item.instance 
+                                        } 
+                                    } 
+                                })}
+                                className="absolute top-6 right-16 p-2 rounded-full text-gray-300 hover:text-gold hover:bg-gold/10 transition-all"
+                                title="Practice this question in Hot Take"
+                            >
+                                <Zap size={18} />
                             </button>
 
                             <div className="flex items-center gap-2 mb-4">

@@ -9,11 +9,7 @@ export interface ScriptWord {
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
-export interface TeleprompterConfig {
-  fontSize: number;
-  opacity: number;
-  scrollSpeed: number; // Manual offset if needed, though we use auto
-}
+// export interface TeleprompterConfig { ... } - Removed as per refactor
 
 export interface DetailedFeedback {
   category: string; // e.g. "Pace (Speed & Rhythm)"

@@ -5,7 +5,6 @@ import { SavedItem, SavedReport, PerformanceReport } from './types';
 import HomeView from './views/HomeView';
 import DatabaseView from './views/DatabaseView';
 import AnalysisView from './views/AnalysisView';
-import TeleprompterView from './views/TeleprompterView';
 import HotTakeView from './views/HotTakeView';
 import WalkieTalkieView from './views/WalkieTalkieView';
 import LoginView from './views/LoginView';
@@ -172,7 +171,7 @@ const MainApp: React.FC = () => {
   }, []);
 
   // -- Navigation --
-  const handleNavigate = (view: 'teleprompter' | 'analysis' | 'database' | 'hot-take' | 'walkie-talkie') => {
+  const handleNavigate = (view: 'analysis' | 'database' | 'hot-take' | 'walkie-talkie') => {
       navigate(`/${view}`);
   };
 
@@ -227,15 +226,6 @@ const MainApp: React.FC = () => {
         
         <Route path="/analysis" element={
           <AnalysisView 
-            onHome={goHome} 
-            isSaved={isSaved} 
-            onToggleSave={toggleSaveItem}
-            onSaveReport={saveReport}
-          />
-        } />
-        
-        <Route path="/teleprompter" element={
-          <TeleprompterView 
             onHome={goHome} 
             isSaved={isSaved} 
             onToggleSave={toggleSaveItem}

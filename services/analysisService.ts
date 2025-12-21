@@ -4,22 +4,8 @@ import { PerformanceReport, HotTakeGlobalContext, HotTakePreference, HotTakeQues
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
-export const generateTTS = async (text: string): Promise<string> => {
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: { parts: [{ text: text }] },
-        config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } }
-            }
-        }
-    });
-
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!base64Audio) throw new Error("No audio data returned from TTS");
-    return base64Audio;
-};
+// Remove generateTTS and analyzeTeleprompterRecording imports and functions if they are no longer used.
+// Or just remove the specific function `analyzeTeleprompterRecording`.
 
 export const analyzeStage1_Transcribe = async (base64Audio: string, mimeType: string, context: string) => {
     const transcriptResponse = await ai.models.generateContent({
@@ -233,69 +219,6 @@ export const analyzeStage2_Coach = async (base64Audio: string | null, transcript
         },
         contents: {
             parts: parts
-        }
-    });
-
-    return JSON.parse(response.text);
-};
-
-export const analyzeTeleprompterRecording = async (base64Audio: string, scriptText: string): Promise<PerformanceReport> => {
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: {
-            parts: [
-                { inlineData: { mimeType: 'audio/wav', data: base64Audio } },
-                { text: `You are an expert public speaking & delivery coach. Analyze this mock interview rehearsal recording focusing on the CANDIDATE'S DELIVERY PERFORMANCE.
-
-IMPORTANT: This recording contains TWO speakers:
-1. An AI Mock Interviewer asking the question (IGNORE this part)
-2. The Candidate answering (ANALYZE ONLY this part)
-
-The candidate's script/answer they were practicing:
-"${scriptText}"
-
-Your Task:
-Evaluate the CANDIDATE'S delivery (not the interviewer) across these dimensions:
-1. **Pace & Rhythm**: Are they rushing? Speaking too slowly? Monotone? Do they vary their pace for emphasis?
-2. **Clarity & Articulation**: Are words clear and crisp, or mumbled? Any pronunciation issues?
-3. **Engagement vs Monologuing**: Does it sound conversational and engaging, or like they're reading a script/monologuing?
-4. **Vocal Variety**: Do they use pauses, emphasis, and tonal changes? Or is it flat?
-5. **Confidence & Presence**: Do they sound confident and authentic, or nervous/robotic?
-
-Keep feedback BRIEF but ACTIONABLE. Focus on the top 2-3 issues in the candidate's answer only.
-
-Provide:
-- rating (0-100): Overall delivery score for the CANDIDATE
-- summary (2-3 sentences): Quick assessment of the candidate's delivery strengths and biggest weakness
-- suggestions (3 brief tips): Actionable advice to improve the candidate's delivery
-- pronunciationFeedback (2-4 specific drills): Target the WORST delivery moments in the candidate's answer - rushed phrases, monotone sections, unclear words. Use visual drills with CAPS for emphasis and ... for pauses.` }
-            ]
-        },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: GeminiType.OBJECT,
-                properties: {
-                    rating: { type: GeminiType.INTEGER },
-                    summary: { type: GeminiType.STRING },
-                    suggestions: { type: GeminiType.ARRAY, items: { type: GeminiType.STRING } },
-                    pronunciationFeedback: { 
-                        type: GeminiType.ARRAY, 
-                        description: "2-4 targeted drills for delivery issues (pace, clarity, monotone, rushed speech)",
-                        items: { 
-                            type: GeminiType.OBJECT,
-                            properties: {
-                                phrase: { type: GeminiType.STRING, description: "The phrase from the script that had delivery issues" },
-                                issue: { type: GeminiType.STRING, description: "What went wrong: e.g. 'Rushed and monotone', 'Mumbled ending', 'No pause for emphasis'" },
-                                practiceDrill: { type: GeminiType.STRING, description: "Visual drill with CAPS for emphasis and ... for pauses" },
-                                reason: { type: GeminiType.STRING, description: "Why fixing this matters for executive presence" }
-                            },
-                            required: ["phrase", "issue", "practiceDrill", "reason"]
-                        } 
-                    }
-                },
-                required: ["rating", "summary", "suggestions", "pronunciationFeedback"]
-            }
         }
     });
 
