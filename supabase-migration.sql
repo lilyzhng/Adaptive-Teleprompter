@@ -21,9 +21,10 @@ CREATE TABLE IF NOT EXISTS public.saved_reports (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('coach', 'rehearsal')),
+    type TEXT NOT NULL CHECK (type IN ('coach', 'walkie', 'hot-take')),
     rating INTEGER NOT NULL CHECK (rating >= 0 AND rating <= 100),
     report_data JSONB NOT NULL,
+    report_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -32,6 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_saved_items_user_id ON public.saved_items(user_id
 CREATE INDEX IF NOT EXISTS idx_saved_items_created_at ON public.saved_items(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_saved_reports_user_id ON public.saved_reports(user_id);
 CREATE INDEX IF NOT EXISTS idx_saved_reports_created_at ON public.saved_reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_saved_reports_report_date ON public.saved_reports(report_date DESC);
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.saved_items ENABLE ROW LEVEL SECURITY;

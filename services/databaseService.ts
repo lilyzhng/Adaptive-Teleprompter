@@ -109,9 +109,11 @@ export const fetchSavedReports = async (userId: string): Promise<SavedReport[]> 
 export const createSavedReport = async (
     userId: string, 
     title: string, 
-    type: 'coach' | 'rehearsal' | 'walkie' | 'hot-take', 
+    type: 'coach' | 'walkie' | 'hot-take', 
     report: PerformanceReport
 ): Promise<SavedReport | null> => {
+    console.log('[DEBUG] createSavedReport called:', { userId, title, type, rating: report.rating });
+    
     const { data, error } = await supabase
         .from('saved_reports')
         .insert({
@@ -126,9 +128,11 @@ export const createSavedReport = async (
         .single();
 
     if (error) {
-        console.error('Error creating saved report:', error);
+        console.error('[DEBUG] Error creating saved report:', error);
         return null;
     }
+    
+    console.log('[DEBUG] Report saved successfully:', data.id);
 
     return {
         id: data.id,

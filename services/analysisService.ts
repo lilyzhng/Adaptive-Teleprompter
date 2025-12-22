@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type as GeminiType, Modality } from '@google/genai';
 import { PerformanceReport, HotTakeGlobalContext, HotTakePreference, HotTakeQuestion, BlindProblem } from '../types';
-import { COACH_CONFIG, HOT_TAKE_CONFIG, WALKIE_TALKIE_CONFIG } from '../config/evaluationPrompts';
+import { TRANSCRIBE_CONFIG, COACH_CONFIG, HOT_TAKE_CONFIG, WALKIE_TALKIE_CONFIG } from '../config/evaluationPrompts';
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
@@ -10,23 +10,14 @@ const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 export const analyzeStage1_Transcribe = async (base64Audio: string, mimeType: string, context: string) => {
     const transcriptResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: TRANSCRIBE_CONFIG.model,
         config: {
-           systemInstruction: `You are a Professional Forensic Transcriber.
-           Objective: Convert interview audio into a verbatim transcript optimized for behavioral analysis.
-           Guidelines:
-           1. Verbatim Accuracy: Do not "clean up" grammar. Keep all "ums," "uhs," "likes," and repeated words. These are crucial for the coach to analyze later.
-           2. Speaker Identification: Label speakers clearly (e.g., [Candidate], [Recruiter]) based on context.
-           3. Timestamps: Insert a timestamp [00:00] every 30-60 seconds or at every speaker change.
-           4. Non-Verbal Cues: Transcribe significant sounds in brackets, e.g., [nervous laughter], [long pause], [sigh], [typing noise].
-           5. Output Format: Clean Markdown.
-           6. Start Logic: Ignore any initial background noise, rustling, static, or setup sounds (e.g. microphone adjustments) at the very beginning of the file. Start the transcription strictly at the first intelligible human speech.`
+            systemInstruction: TRANSCRIBE_CONFIG.systemPrompt
         },
         contents: {
             parts: [
                 { inlineData: { mimeType: mimeType, data: base64Audio } },
-                { text: `Please transcribe the attached audio file following the forensic guidelines.
-                User Context to identify speakers: "${context}"` }
+                { text: TRANSCRIBE_CONFIG.generatePrompt(context) }
             ]
         }
     });
@@ -225,27 +216,6 @@ const WALKIE_REPORT_SCHEMA = {
     required: ["rating", "summary", "rubricScores", "mentalModelChecklist", "detectedAutoScore", "detailedFeedback", "missingEdgeCases"]
 };
 
-const BLIND_PROBLEM_SCHEMA = {
-    type: GeminiType.ARRAY,
-    items: {
-        type: GeminiType.OBJECT,
-        properties: {
-            id: { type: GeminiType.STRING },
-            title: { type: GeminiType.STRING },
-            prompt: { type: GeminiType.STRING },
-            example: { type: GeminiType.STRING },
-            constraints: { type: GeminiType.ARRAY, items: { type: GeminiType.STRING } },
-            pattern: { type: GeminiType.STRING },
-            keyIdea: { type: GeminiType.STRING },
-            skeleton: { type: GeminiType.STRING },
-            timeComplexity: { type: GeminiType.STRING },
-            spaceComplexity: { type: GeminiType.STRING },
-            steps: { type: GeminiType.ARRAY, items: { type: GeminiType.STRING } },
-            expectedEdgeCases: { type: GeminiType.ARRAY, items: { type: GeminiType.STRING } },
-        }
-    }
-};
-
 export const analyzeWalkieSession = async (base64Audio: string, polishedText: string, currentProblem: BlindProblem): Promise<PerformanceReport> => {
     const prompt = WALKIE_TALKIE_CONFIG.generatePrompt({
         title: currentProblem.title,
@@ -269,42 +239,12 @@ export const analyzeWalkieSession = async (base64Audio: string, polishedText: st
     return JSON.parse(response.text);
 };
 
-export const refineTranscript = async (rawTranscript: string, currentProblem: BlindProblem): Promise<string> => {
+export const refineTranscript = async (rawTranscript: string, context: string): Promise<string> => {
     const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `
-            Refine the following raw speech-to-text transcript from a technical interview.
-            The user is solving the coding problem: "${currentProblem.title}".
-            Fix technical terms (e.g., "hash map", "O of N", "dynamic programming").
-            Remove filler words (um, ah, like). Keep the sentence structure natural.
-            
-            Raw: "${rawTranscript}"
-            
-            Return only the refined transcript text.
-        `
+        model: WALKIE_TALKIE_CONFIG.model,
+        contents: WALKIE_TALKIE_CONFIG.generateRefinePrompt(rawTranscript, context)
     });
     return response.text || rawTranscript;
-};
-
-export const generateProblemSet = async (topics: string[], batchSize: number): Promise<BlindProblem[]> => {
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `
-        You are an Interview Problem Database.
-        Generate ${batchSize} authentic Blind 75 / LeetCode problems related to these topics: ${topics.join(', ')}.
-        
-        CRITICAL RULES:
-        1. DO NOT HALLUCINATE OR INVENT NEW PROBLEMS. Use only well-known Blind 75 / LeetCode 150 problems.
-        2. DO NOT change the problem context to fit a theme (e.g., do not mention coffee shops, parks, or baristas). Use the ORIGINAL problem statement (e.g., "Given an array of integers...").
-        3. The 'prompt' field must be the full, original problem description.
-        
-        Return JSON.`,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: BLIND_PROBLEM_SCHEMA
-        }
-    });
-    return JSON.parse(response.text || "[]");
 };
 
 // ========== HOT TAKE FUNCTIONS ==========
@@ -375,21 +315,15 @@ export const evaluateHotTakeInitial = async (
 };
 
 export const finalizeHotTake = async (historyJson: string, globalContext: HotTakeGlobalContext): Promise<PerformanceReport> => {
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: `
-            Finalize this Hot Take session. Evaluate the candidate's follow-up response.
-            History: ${historyJson}
-            Context: ${globalContext.company || 'Tech Company'}, ${globalContext.roundFocus || 'Behavioral Interview'}.
-            
-            Provide a final performance report for this follow-up round:
-            1. A score (0-100) for the follow-up answer specifically.
-            2. A "hotTakeRubric" with scores (each 0-25) for: clarity, technicalDepth, strategicThinking, executivePresence.
-            3. A "hotTakeMasterRewrite" showing how to improve the follow-up answer.
-            4. A "summary" with specific critique of the follow-up response.
+    const prompt = HOT_TAKE_CONFIG.generateFinalizePrompt(
+        historyJson,
+        globalContext.company || '',
+        globalContext.roundFocus || ''
+    );
 
-            CRITICAL: Return PURE JSON. No meta-commentary or internal thought traces in the output strings.
-        `,
+    const response = await ai.models.generateContent({
+        model: HOT_TAKE_CONFIG.model,
+        contents: prompt,
         config: {
             responseMimeType: "application/json",
             responseSchema: HOT_TAKE_REPORT_SCHEMA
@@ -398,36 +332,21 @@ export const finalizeHotTake = async (historyJson: string, globalContext: HotTak
     return JSON.parse(response.text);
 };
 
-export const refineHotTakeTranscript = async (rawTranscript: string, context: string): Promise<string> => {
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Refine this speech-to-text transcript from an interview answer.
-        Context: ${context}
-        Raw transcript: "${rawTranscript}"
-        
-        Fix technical terms, remove filler words (um, ah, like), and clean up the grammar while preserving the speaker's intent and style.
-        Return only the refined transcript text.`
-    });
-    return response.text || rawTranscript;
-};
-
 export const customizeHotTakeQuestions = async (baseQuestions: HotTakeQuestion[], globalContext: HotTakeGlobalContext): Promise<HotTakeQuestion[]> => {
     if (!globalContext.company && !globalContext.roundFocus) {
         return baseQuestions;
     }
     
+    const prompt = HOT_TAKE_CONFIG.generateCustomizeQuestionsPrompt(
+        JSON.stringify(baseQuestions),
+        globalContext.company || '',
+        globalContext.interviewer || '',
+        globalContext.roundFocus || ''
+    );
+
     const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `
-            Customize these interview questions for ${globalContext.company || 'a tech company'}.
-            Interviewer Role: ${globalContext.interviewer || 'Senior Hiring Manager'}.
-            Round Focus: ${globalContext.roundFocus || 'General behavioral interview'}.
-            
-            Base Questions: ${JSON.stringify(baseQuestions)}
-            
-            Return a list of modified questions with updated titles and contexts to be more specific to the company/role.
-            Keep the same IDs as the original questions.
-        `,
+        model: HOT_TAKE_CONFIG.model,
+        contents: prompt,
         config: {
             responseMimeType: "application/json",
             responseSchema: HOT_TAKE_QUESTION_SCHEMA
@@ -442,22 +361,17 @@ export const regenerateHotTakeFollowUp = async (
     feedback: string,
     globalContext: HotTakeGlobalContext
 ): Promise<string> => {
+    const prompt = HOT_TAKE_CONFIG.generateRegenerateFollowUpPrompt(
+        transcript,
+        previousQuestion,
+        feedback,
+        globalContext.interviewer || '',
+        globalContext.company || ''
+    );
+
     const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `
-            The user disliked the previous follow-up question: "${previousQuestion}".
-            Feedback: "${feedback}".
-            
-            Context: User answered "${transcript}" to an interview question.
-            Role: ${globalContext.interviewer || 'Senior Hiring Manager'} at ${globalContext.company || 'a tech company'}.
-            
-            Generate a BETTER, different follow-up question that:
-            1. Is more relevant to what the user actually said
-            2. Probes a different angle or weakness
-            3. Is specific and challenging
-            
-            Return only the new question text.
-        `
+        model: HOT_TAKE_CONFIG.model,
+        contents: prompt
     });
     return response.text || "Could you elaborate on that point?";
 };

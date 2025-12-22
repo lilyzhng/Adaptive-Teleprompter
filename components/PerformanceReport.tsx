@@ -11,7 +11,7 @@ interface PerformanceReportProps {
     report: ReportType;
     reportType?: ReportDisplayType; // Explicitly set report type for display
     transcript?: string;
-    context?: string; // Interview context/question for rehearsal practice
+    context?: string; // Interview context/question
     isSaved: (title: string, content: string) => boolean;
     onToggleSave: (item: Omit<SavedItem, 'id' | 'date'>) => void;
     onDone: (force: boolean) => void;

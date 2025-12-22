@@ -11,6 +11,31 @@
  */
 
 // ============================================================
+// TRANSCRIBE (Stage 1) - Audio to Verbatim Transcript
+// ============================================================
+
+export const TRANSCRIBE_CONFIG = {
+    name: 'Forensic Transcriber',
+    model: 'gemini-2.5-flash',
+
+    systemPrompt: `You are a Professional Forensic Transcriber.
+Objective: Convert interview audio into a verbatim transcript optimized for behavioral analysis.
+
+Guidelines:
+1. Verbatim Accuracy: Do not "clean up" grammar. Keep all "ums," "uhs," "likes," and repeated words. These are crucial for the coach to analyze later.
+2. Speaker Identification: Label speakers clearly (e.g., [Candidate], [Recruiter]) based on context.
+3. Timestamps: Insert a timestamp [00:00] every 30-60 seconds or at every speaker change.
+4. Non-Verbal Cues: Transcribe significant sounds in brackets, e.g., [nervous laughter], [long pause], [sigh], [typing noise].
+5. Output Format: Clean Markdown.
+6. Start Logic: Ignore any initial background noise, rustling, static, or setup sounds (e.g. microphone adjustments) at the very beginning of the file. Start the transcription strictly at the first intelligible human speech.`,
+
+    generatePrompt: (context: string) => 
+        `Please transcribe the attached audio file following the forensic guidelines.
+User Context to identify speakers: "${context}"`
+};
+
+
+// ============================================================
 // COACH (Interview Report) - Real Interview Analysis
 // ============================================================
 
@@ -176,7 +201,54 @@ RUBRIC GUIDELINES:
 - Strategic Thinking (0-25): Does it show big-picture, business-impact thinking?
 - Executive Presence (0-25): Does the candidate sound like a confident leader?
 
-CRITICAL: Return PURE JSON. Do not include internal monologue, "thinking steps", or parenthetical notes inside the JSON string fields.`
+CRITICAL: Return PURE JSON. Do not include internal monologue, "thinking steps", or parenthetical notes inside the JSON string fields.`,
+
+    generateFinalizePrompt: (historyJson: string, company: string, roundFocus: string) => `
+Finalize this Hot Take session. Evaluate the candidate's follow-up response.
+
+Conversation History: ${historyJson}
+
+Context: ${company || 'Tech Company'}, ${roundFocus || 'Behavioral Interview'}.
+
+You are evaluating how well the candidate handled the follow-up question that probed a weakness in their initial answer.
+
+Provide a final performance report for this follow-up round:
+1. A score (0-100) for the follow-up answer specifically, calculated as the sum of the 4 rubric scores.
+2. A "hotTakeRubric" with scores (each 0-25) for: clarity, technicalDepth, strategicThinking, executivePresence.
+3. A "hotTakeMasterRewrite" showing how to improve the follow-up answer to be executive-level.
+4. A "summary" with specific critique of the follow-up response.
+
+RUBRIC GUIDELINES:
+- Clarity (0-25): Is the follow-up answer clear, structured, and easy to follow?
+- Technical Depth (0-25): Does it demonstrate real technical expertise with specifics?
+- Strategic Thinking (0-25): Does it show big-picture, business-impact thinking?
+- Executive Presence (0-25): Does the candidate sound like a confident leader under pressure?
+
+CRITICAL: Return PURE JSON. No meta-commentary or internal thought traces in the output strings.`,
+
+    generateCustomizeQuestionsPrompt: (baseQuestionsJson: string, company: string, interviewer: string, roundFocus: string) => `
+Customize these interview questions for ${company || 'a tech company'}.
+Interviewer Role: ${interviewer || 'Senior Hiring Manager'}.
+Round Focus: ${roundFocus || 'General behavioral interview'}.
+
+Base Questions: ${baseQuestionsJson}
+
+Return a list of modified questions with updated titles and contexts to be more specific to the company/role.
+Keep the same IDs as the original questions.`,
+
+    generateRegenerateFollowUpPrompt: (transcript: string, previousQuestion: string, feedback: string, interviewer: string, company: string) => `
+The user disliked the previous follow-up question: "${previousQuestion}".
+Feedback: "${feedback}".
+
+Context: User answered "${transcript}" to an interview question.
+Role: ${interviewer || 'Senior Hiring Manager'} at ${company || 'a tech company'}.
+
+Generate a BETTER, different follow-up question that:
+1. Is more relevant to what the user actually said
+2. Probes a different angle or weakness
+3. Is specific and challenging
+
+Return only the new question text.`
 };
 
 
@@ -322,7 +394,21 @@ OUTPUT REQUIREMENTS:
 - missingEdgeCases: List edge cases they failed to mention
 - summary: Brief overall assessment
 
-CRITICAL: Return PURE JSON. Be strict - do not give points for things they didn't actually say.`
+CRITICAL: Return PURE JSON. Be strict - do not give points for things they didn't actually say.`,
+
+    generateRefinePrompt: (rawTranscript: string, context: string) => `
+Refine the following raw speech-to-text transcript from an interview.
+Context: ${context}
+
+Guidelines:
+- Fix technical terms (e.g., "hash map", "O of N", "dynamic programming")
+- Remove filler words (um, ah, like)
+- Clean up grammar while preserving the speaker's intent and style
+- Keep the sentence structure natural
+
+Raw transcript: "${rawTranscript}"
+
+Return only the refined transcript text.`
 };
 
 
@@ -331,6 +417,7 @@ CRITICAL: Return PURE JSON. Be strict - do not give points for things they didn'
 // ============================================================
 
 export const EVALUATION_CONFIGS = {
+    transcribe: TRANSCRIBE_CONFIG,
     coach: COACH_CONFIG,
     hotTake: HOT_TAKE_CONFIG,
     walkieTalkie: WALKIE_TALKIE_CONFIG

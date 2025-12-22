@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Home, ArrowLeft, Mic, StopCircle, Zap, Loader2, Trophy, Timer, MessageSquare, Star, ArrowUpRight, Plus, X, BookOpen, Settings, Building2, UserCircle2, Target, ThumbsUp, ThumbsDown, Save, SkipForward } from 'lucide-react';
 import { HotTakeQuestion, PerformanceReport, SavedItem, HotTakeTurn, HotTakeGlobalContext, HotTakePreference } from '../types';
-import { evaluateHotTakeInitial, finalizeHotTake, refineHotTakeTranscript, customizeHotTakeQuestions, regenerateHotTakeFollowUp } from '../services/analysisService';
+import { evaluateHotTakeInitial, finalizeHotTake, refineTranscript, customizeHotTakeQuestions, regenerateHotTakeFollowUp } from '../services/analysisService';
 import { formatTime } from '../utils';
 import PerformanceReportComponent from '../components/PerformanceReport';
 
@@ -216,7 +216,7 @@ const HotTakeView: React.FC<HotTakeViewProps> = ({ onHome, onSaveReport, isSaved
     setRatingState('idle'); // Reset rating state for next step
 
     try {
-      const currentT = await refineHotTakeTranscript(rawT, selectedQuestion?.context || "");
+      const currentT = await refineTranscript(rawT, selectedQuestion?.context || "");
 
       if (sessionMode === 'initial') {
         // Pass preferences here to condition the follow-up generation

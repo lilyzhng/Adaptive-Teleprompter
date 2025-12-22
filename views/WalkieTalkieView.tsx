@@ -137,7 +137,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           const base64Audio = (reader.result as string).split(',')[1];
           try {
             if (currentProblem) {
-              const polishedText = await refineTranscript(rawTranscript, currentProblem);
+              const polishedText = await refineTranscript(rawTranscript, `Solving coding problem: ${currentProblem.title}`);
               setTranscript(polishedText);
               setAnalysisPhase('evaluating');
               const report = await analyzeWalkieSession(base64Audio, polishedText, currentProblem);

@@ -10,7 +10,7 @@ interface AnalysisViewProps {
     onHome: (force: boolean) => void;
     isSaved: (title: string, content: string) => boolean;
     onToggleSave: (item: Omit<SavedItem, 'id' | 'date'>) => void;
-    onSaveReport: (title: string, type: 'coach' | 'rehearsal', report: PerformanceReport) => void;
+    onSaveReport: (title: string, type: 'coach', report: PerformanceReport) => void;
 }
 
 // Type for persisted file info (without base64 to keep it small)

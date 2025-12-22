@@ -158,13 +158,21 @@ const MainApp: React.FC = () => {
   }, []);
 
   // -- Report Logic --
-  const saveReport = useCallback(async (title: string, type: 'coach' | 'rehearsal' | 'walkie' | 'hot-take', report: PerformanceReport) => {
+const saveReport = useCallback(async (title: string, type: 'coach' | 'walkie' | 'hot-take', report: PerformanceReport) => {
       const userId = user?.id;
-      if (!userId) return;
+      console.log('[DEBUG] saveReport called:', { title, type, userId: userId || 'NO USER ID' });
       
+      if (!userId) {
+          console.error('[DEBUG] saveReport aborted - no user ID');
+          return;
+      }
+
       const newReport = await db.createSavedReport(userId, title, type, report);
       if (newReport) {
+          console.log('[DEBUG] Report added to state:', newReport.id);
           setSavedReports(prev => [newReport, ...prev]);
+      } else {
+          console.error('[DEBUG] createSavedReport returned null');
       }
   }, [user?.id]);
 

@@ -155,7 +155,7 @@ export interface SavedItem {
   content: string; // "quote" or "instance" or "questionAsked"
   rewrite?: string; // Only for improvements and candidate questions
   explanation?: string; // Only for improvements
-  question?: string; // The original interview question (for rehearsal practice)
+  question?: string; // The original interview question
   humanRewrite?: string; // AI recommended human-like rewrite for speaking practice
   context?: string; // For candidate questions: when this was relevant
   impact?: string; // For missed opportunities: why this matters
@@ -170,7 +170,7 @@ export interface SavedReport {
     id: string;
     date: string;
     title: string; // Context string or Script name
-    type: 'coach' | 'rehearsal' | 'walkie' | 'hot-take';
+    type: 'coach' | 'walkie' | 'hot-take';
     rating: number;
     reportData: PerformanceReport;
 }

@@ -49,15 +49,13 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
     // Filter reports based on selected type
     const filteredReports = savedReports.filter(r => {
         if (reportTypeFilter === 'all') return true;
-        // Include 'rehearsal' with 'coach' type
-        if (reportTypeFilter === 'coach') return r.type === 'coach' || r.type === 'rehearsal';
         return r.type === reportTypeFilter;
     });
     
     // Count reports by type
     const reportCounts = {
         all: savedReports.length,
-        coach: savedReports.filter(r => r.type === 'coach' || r.type === 'rehearsal').length,
+        coach: savedReports.filter(r => r.type === 'coach').length,
         'hot-take': savedReports.filter(r => r.type === 'hot-take').length,
         walkie: savedReports.filter(r => r.type === 'walkie').length
     };
@@ -105,7 +103,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                      <div className="max-w-4xl mx-auto pb-20">
                          <PerformanceReportComponent 
                             report={selectedReport.reportData}
-                            reportType={selectedReport.type === 'rehearsal' ? 'coach' : selectedReport.type as 'coach' | 'walkie' | 'hot-take'}
+                            reportType={selectedReport.type as 'coach' | 'walkie' | 'hot-take'}
                             context={selectedReport.title}
                             isSaved={isSaved} 
                             onToggleSave={onToggleSave} 
@@ -203,16 +201,14 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                  <div className="space-y-4">
                                      {filteredReports.map(report => {
                                          const isEditing = editingReportId === report.id;
-                                         const typeConfig = REPORT_TYPE_CONFIG[report.type === 'rehearsal' ? 'coach' : report.type as keyof typeof REPORT_TYPE_CONFIG];
+                                         const typeConfig = REPORT_TYPE_CONFIG[report.type as keyof typeof REPORT_TYPE_CONFIG];
                                          const badgeColors = {
                                              'coach': 'bg-gold/10 text-gold',
-                                             'rehearsal': 'bg-gold/10 text-gold',
                                              'hot-take': 'bg-purple-500/10 text-purple-600',
                                              'walkie': 'bg-blue-500/10 text-blue-600'
                                          };
                                          const ringColors = {
                                              'coach': '#C7A965',
-                                             'rehearsal': '#C7A965',
                                              'hot-take': '#a855f7',
                                              'walkie': '#3b82f6'
                                          };

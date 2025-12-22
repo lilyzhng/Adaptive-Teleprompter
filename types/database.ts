@@ -117,7 +117,7 @@ export interface Database {
           id: string
           user_id: string
           title: string
-          type: 'coach' | 'rehearsal' | 'walkie' | 'hot-take'
+          type: 'coach' | 'walkie' | 'hot-take'
           rating: number
           report_data: Json
           created_at: string
@@ -127,7 +127,7 @@ export interface Database {
           id?: string
           user_id: string
           title: string
-          type: 'coach' | 'rehearsal' | 'walkie' | 'hot-take'
+          type: 'coach' | 'walkie' | 'hot-take'
           rating: number
           report_data: Json
           created_at?: string
@@ -137,7 +137,7 @@ export interface Database {
           id?: string
           user_id?: string
           title?: string
-          type?: 'coach' | 'rehearsal' | 'walkie' | 'hot-take'
+          type?: 'coach' | 'walkie' | 'hot-take'
           rating?: number
           report_data?: Json
           created_at?: string
