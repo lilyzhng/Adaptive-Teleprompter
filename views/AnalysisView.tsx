@@ -457,6 +457,7 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                          {/* Stage 2 Result: Performance Report */}
                          <PerformanceReportComponent
                             report={performanceReport}
+                            reportType="coach"
                             transcript={transcriptionResult || manualTranscript}
                             context={uploadContext}
                             isSaved={isSaved}

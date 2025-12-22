@@ -97,6 +97,18 @@ export interface HotTakeQuestion {
   source?: string; // Optional source tag (e.g., "Augment Code Interview")
 }
 
+// WalkieTalkie Rubric Scores
+export interface WalkieRubricScores {
+  algorithmScore: number;
+  algorithmFeedback: string;
+  edgeCasesScore: number;
+  edgeCasesFeedback: string;
+  timeComplexityScore: number;
+  timeComplexityFeedback: string;
+  spaceComplexityScore: number;
+  spaceComplexityFeedback: string;
+}
+
 export interface PerformanceReport {
   rating: number;
   summary: string;
@@ -107,11 +119,18 @@ export interface PerformanceReport {
   coachingRewrite?: CoachingRewrite; // Global rewrite
   flipTheTable?: FlipTheTable; // Analysis of candidate's questions
   // Walkie Talkie specific fields
+  rubricScores?: WalkieRubricScores; // Strict rubric scoring for LeetCode
   mentalModelChecklist?: {
-    logicCorrect: boolean;
-    edgeCasesMentioned: boolean;
-    complexityAnalyzed: boolean;
-    exampleTraced: boolean;
+    correctPattern?: boolean;
+    logicCorrect?: boolean;
+    timeComplexityMentioned?: boolean;
+    timeComplexityCorrect?: boolean;
+    spaceComplexityMentioned?: boolean;
+    spaceComplexityCorrect?: boolean;
+    edgeCasesMentioned?: boolean;
+    // Legacy fields for backwards compatibility
+    complexityAnalyzed?: boolean;
+    exampleTraced?: boolean;
   };
   missingEdgeCases?: string[];
   detectedAutoScore?: 'good' | 'partial' | 'missed';

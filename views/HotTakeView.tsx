@@ -399,11 +399,12 @@ const HotTakeView: React.FC<HotTakeViewProps> = ({ onHome, onSaveReport, isSaved
         
         <div className="flex-1 overflow-y-auto p-12 bg-[#FAF9F6]">
           <div className="max-w-7xl mx-auto pb-32">
-             <PerformanceReportComponent 
-                report={report} 
-                isSaved={isSaved} 
-                onToggleSave={onToggleSave} 
-                onDone={() => onHome(true)} 
+<PerformanceReportComponent
+                report={report}
+                reportType="hot-take"
+                isSaved={isSaved}
+                onToggleSave={onToggleSave}
+                onDone={() => onHome(true)}
              />
           </div>
         </div>

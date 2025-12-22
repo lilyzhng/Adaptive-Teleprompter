@@ -5,14 +5,24 @@ import { Download, Award, PenTool, Quote, Lightbulb, Bookmark, ThumbsUp, Star, E
 import { PerformanceReport as ReportType, SavedItem } from '../types';
 import html2canvas from 'html2canvas';
 
+type ReportDisplayType = 'coach' | 'walkie' | 'hot-take';
+
 interface PerformanceReportProps {
     report: ReportType;
+    reportType?: ReportDisplayType; // Explicitly set report type for display
     transcript?: string;
     context?: string; // Interview context/question for rehearsal practice
     isSaved: (title: string, content: string) => boolean;
     onToggleSave: (item: Omit<SavedItem, 'id' | 'date'>) => void;
     onDone: (force: boolean) => void;
 }
+
+// Report display configuration
+const REPORT_CONFIG: Record<ReportDisplayType, { title: string; subtitle: string; icon: string }> = {
+    'coach': { title: 'Interview Report', subtitle: 'Stage 2: The Coach', icon: 'award' },
+    'hot-take': { title: 'Tech Drill Report', subtitle: 'Hot Take Protocol', icon: 'zap' },
+    'walkie': { title: 'LeetCode Report', subtitle: 'Algorithm Analysis', icon: 'code' }
+};
 
 // Helper to create report data context for saving
 const createReportContext = (report: ReportType, transcript?: string, context?: string) => ({
@@ -21,15 +31,18 @@ const createReportContext = (report: ReportType, transcript?: string, context?: 
     context
 });
 
-const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcript, context, isSaved, onToggleSave, onDone }) => {
-    const { rating, summary, detailedFeedback, highlights, pronunciationFeedback, coachingRewrite, flipTheTable, hotTakeRubric, hotTakeMasterRewrite, hotTakeHistory, hotTakeRounds } = report;
+const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, reportType, transcript, context, isSaved, onToggleSave, onDone }) => {
+    const { rating, summary, detailedFeedback, highlights, pronunciationFeedback, coachingRewrite, flipTheTable, hotTakeRubric, hotTakeMasterRewrite, hotTakeHistory, hotTakeRounds, mentalModelChecklist, missingEdgeCases, rubricScores } = report;
     const [showRewrite, setShowRewrite] = useState(false);
     const [activeHotTakeRound, setActiveHotTakeRound] = useState<'round1' | 'round2'>('round1');
     const reportRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
 
-    // Helper to determine report type based on content
+    // Determine report type: explicit prop > auto-detect from content
     const isHotTake = !!hotTakeRubric || !!hotTakeRounds;
+    const isWalkie = !!rubricScores || !!mentalModelChecklist || !!missingEdgeCases;
+    const effectiveReportType: ReportDisplayType = reportType || (isHotTake ? 'hot-take' : isWalkie ? 'walkie' : 'coach');
+    const reportConfig = REPORT_CONFIG[effectiveReportType];
     
     // Determine active data for Hot Take
     const currentRoundData = hotTakeRounds ? hotTakeRounds[activeHotTakeRound] : null;
@@ -99,9 +112,9 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
             <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                      <div className="flex items-center gap-2 text-gold text-[10px] sm:text-xs font-bold tracking-widest uppercase mb-1 sm:mb-2">
-                        <Award size={12} className="sm:w-3.5 sm:h-3.5" /> {isHotTake ? 'Hot Take Protocol' : 'Stage 2: The Coach'}
+                        <Award size={12} className="sm:w-3.5 sm:h-3.5" /> {reportConfig.subtitle}
                      </div>
-                     <h2 className="text-2xl sm:text-4xl font-serif font-bold text-charcoal">Performance Report</h2>
+                     <h2 className="text-2xl sm:text-4xl font-serif font-bold text-charcoal">{reportConfig.title}</h2>
                 </div>
                 <div className="flex flex-wrap gap-2 sm:gap-3">
                      {(transcript || hotTakeHistory || hotTakeRounds) && (
@@ -210,6 +223,82 @@ const PerformanceReport: React.FC<PerformanceReportProps> = ({ report, transcrip
                                 </div>
                              ))}
                          </div>
+                     </div>
+                </div>
+            )}
+
+            {/* LeetCode Rubric Scores - Strict Evaluation */}
+            {rubricScores && effectiveReportType === 'walkie' && (
+                <div className="mb-8 sm:mb-12 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                     <div className="mb-3 sm:mb-4 flex items-center gap-2 text-charcoal text-[10px] sm:text-xs font-bold tracking-widest uppercase">
+                        <Target size={12} className="sm:w-3.5 sm:h-3.5" /> Rubric Evaluation
+                     </div>
+                     <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-8 border border-[#EBE8E0] shadow-sm">
+                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8">
+                             {/* Algorithm Score */}
+                             <div className="space-y-2">
+                                 <div className="flex justify-between text-[10px] sm:text-xs font-bold uppercase tracking-wider sm:tracking-widest">
+                                     <span className="text-gray-500">Algorithm</span>
+                                     <span className={rubricScores.algorithmScore >= 20 ? 'text-green-600' : rubricScores.algorithmScore >= 10 ? 'text-yellow-600' : 'text-red-500'}>{rubricScores.algorithmScore} / 25</span>
+                                 </div>
+                                 <div className="h-1.5 sm:h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                                     <div className={`h-full ${rubricScores.algorithmScore >= 20 ? 'bg-green-500' : rubricScores.algorithmScore >= 10 ? 'bg-yellow-500' : 'bg-red-400'}`} style={{ width: `${(rubricScores.algorithmScore || 0) * 4}%` }}></div>
+                                 </div>
+                                 <p className="text-xs text-gray-500 leading-relaxed">{rubricScores.algorithmFeedback}</p>
+                             </div>
+                             
+                             {/* Edge Cases Score */}
+                             <div className="space-y-2">
+                                 <div className="flex justify-between text-[10px] sm:text-xs font-bold uppercase tracking-wider sm:tracking-widest">
+                                     <span className="text-gray-500">Edge Cases</span>
+                                     <span className={rubricScores.edgeCasesScore >= 20 ? 'text-green-600' : rubricScores.edgeCasesScore >= 10 ? 'text-yellow-600' : 'text-red-500'}>{rubricScores.edgeCasesScore} / 25</span>
+                                 </div>
+                                 <div className="h-1.5 sm:h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                                     <div className={`h-full ${rubricScores.edgeCasesScore >= 20 ? 'bg-green-500' : rubricScores.edgeCasesScore >= 10 ? 'bg-yellow-500' : 'bg-red-400'}`} style={{ width: `${(rubricScores.edgeCasesScore || 0) * 4}%` }}></div>
+                                 </div>
+                                 <p className="text-xs text-gray-500 leading-relaxed">{rubricScores.edgeCasesFeedback}</p>
+                             </div>
+                             
+                             {/* Time Complexity Score */}
+                             <div className="space-y-2">
+                                 <div className="flex justify-between text-[10px] sm:text-xs font-bold uppercase tracking-wider sm:tracking-widest">
+                                     <span className="text-gray-500">Time Complexity</span>
+                                     <span className={rubricScores.timeComplexityScore >= 20 ? 'text-green-600' : rubricScores.timeComplexityScore >= 10 ? 'text-yellow-600' : 'text-red-500'}>{rubricScores.timeComplexityScore} / 25</span>
+                                 </div>
+                                 <div className="h-1.5 sm:h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                                     <div className={`h-full ${rubricScores.timeComplexityScore >= 20 ? 'bg-green-500' : rubricScores.timeComplexityScore >= 10 ? 'bg-yellow-500' : 'bg-red-400'}`} style={{ width: `${(rubricScores.timeComplexityScore || 0) * 4}%` }}></div>
+                                 </div>
+                                 <p className="text-xs text-gray-500 leading-relaxed">{rubricScores.timeComplexityFeedback}</p>
+                             </div>
+                             
+                             {/* Space Complexity Score */}
+                             <div className="space-y-2">
+                                 <div className="flex justify-between text-[10px] sm:text-xs font-bold uppercase tracking-wider sm:tracking-widest">
+                                     <span className="text-gray-500">Space Complexity</span>
+                                     <span className={rubricScores.spaceComplexityScore >= 20 ? 'text-green-600' : rubricScores.spaceComplexityScore >= 10 ? 'text-yellow-600' : 'text-red-500'}>{rubricScores.spaceComplexityScore} / 25</span>
+                                 </div>
+                                 <div className="h-1.5 sm:h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                                     <div className={`h-full ${rubricScores.spaceComplexityScore >= 20 ? 'bg-green-500' : rubricScores.spaceComplexityScore >= 10 ? 'bg-yellow-500' : 'bg-red-400'}`} style={{ width: `${(rubricScores.spaceComplexityScore || 0) * 4}%` }}></div>
+                                 </div>
+                                 <p className="text-xs text-gray-500 leading-relaxed">{rubricScores.spaceComplexityFeedback}</p>
+                             </div>
+                         </div>
+                         
+                         {/* Missing Edge Cases */}
+                         {missingEdgeCases && missingEdgeCases.length > 0 && (
+                             <div className="mt-6 pt-6 border-t border-gray-100">
+                                 <div className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-red-500 mb-3 flex items-center gap-2">
+                                     <AlertCircle size={12} /> Missing Edge Cases
+                                 </div>
+                                 <div className="flex flex-wrap gap-2">
+                                     {missingEdgeCases.map((edgeCase, i) => (
+                                         <span key={i} className="text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full border border-red-100">
+                                             {edgeCase}
+                                         </span>
+                                     ))}
+                                 </div>
+                             </div>
+                         )}
                      </div>
                 </div>
             )}

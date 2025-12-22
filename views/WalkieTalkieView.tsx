@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Home, ArrowLeft, Mic, StopCircle, ChevronRight, CheckCircle2, Award, Sparkles, Code2, Loader2, BrainCircuit, X, ShieldAlert, BookOpen, Coffee, Trees, Train, Trophy, Star, AlertCircle, Flame, Target, Repeat } from 'lucide-react';
-import { BlindProblem, PerformanceReport } from '../types';
+import { BlindProblem, PerformanceReport, SavedItem } from '../types';
 import { analyzeWalkieSession, refineTranscript } from '../services/analysisService';
 import { fetchBlindProblemsByTopics } from '../services/databaseService';
 import PerformanceReportComponent from '../components/PerformanceReport';
@@ -11,6 +11,8 @@ interface WalkieTalkieViewProps {
   onSaveReport: (title: string, type: 'walkie', report: PerformanceReport) => void;
   masteredIds: string[];
   onMastered: (id: string) => void;
+  isSaved: (title: string, content: string) => boolean;
+  onToggleSave: (item: Omit<SavedItem, 'id' | 'date'>) => void;
 }
 
 // 3 REAL WORLD LOCATIONS MAPPED TO BLIND 75 TOPICS
@@ -44,7 +46,7 @@ const POWER_SPOTS = [
   }
 ];
 
-const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveReport, masteredIds, onMastered }) => {
+const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveReport, masteredIds, onMastered, isSaved, onToggleSave }) => {
   const [step, setStep] = useState<'locations' | 'curating' | 'problem' | 'recording' | 'analyzing' | 'reveal'>('locations');
   const [analysisPhase, setAnalysisPhase] = useState<'refining' | 'evaluating'>('refining');
   const [selectedSpot, setSelectedSpot] = useState<typeof POWER_SPOTS[0] | null>(null);
@@ -140,9 +142,13 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
               setAnalysisPhase('evaluating');
               const report = await analyzeWalkieSession(base64Audio, polishedText, currentProblem);
               
-              // Normalize score and Ensure it's set in report
-              const score = report.detectedAutoScore || (report.rating >= 85 ? 'good' : report.rating >= 60 ? 'partial' : 'missed');
-              report.detectedAutoScore = score as 'good' | 'partial' | 'missed';
+              // Determine mastery based on rating (source of truth)
+              // The AI's detectedAutoScore can be inconsistent, so we use rating thresholds
+              const score: 'good' | 'partial' | 'missed' = 
+                report.rating >= 75 ? 'good' : 
+                report.rating >= 50 ? 'partial' : 
+                'missed';
+              report.detectedAutoScore = score;
               
               setAiReport(report);
 
@@ -483,11 +489,11 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         {/* Header - Mobile responsive */}
         <div className="p-4 sm:p-6 md:p-8 pr-14 sm:pr-20 md:pr-24 flex items-center justify-between shrink-0 bg-white border-b border-[#E6E6E6]">
              <div className="flex items-center gap-3 sm:gap-6">
-                 <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-charcoal text-white flex items-center justify-center border border-white/10 shrink-0">
-                     <Code2 size={20} className="sm:w-6 sm:h-6" />
-                 </div>
+                 <button onClick={() => onHome(true)} className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-charcoal text-white flex items-center justify-center border border-white/10 shrink-0 hover:bg-black transition-colors">
+                     <Home size={20} className="sm:w-6 sm:h-6" />
+                 </button>
                  <div>
-                     <h2 className="text-base sm:text-xl font-serif font-bold text-charcoal">Walkie Analysis</h2>
+                     <h2 className="text-base sm:text-xl font-serif font-bold text-charcoal">{currentProblem?.title || 'LeetCode Report'}</h2>
                      <p className="text-[8px] sm:text-[10px] font-bold text-gold uppercase tracking-widest">Problem Review</p>
                  </div>
              </div>
@@ -527,12 +533,14 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                     </div>
                 </div>
 
-                <PerformanceReportComponent 
+<PerformanceReportComponent
                    report={aiReport}
+                   reportType="walkie"
                    transcript={transcript}
-                   isSaved={() => false}
-                   onToggleSave={() => {}}
-                   onDone={() => {}} 
+                   context={currentProblem?.title}
+                   isSaved={isSaved}
+                   onToggleSave={onToggleSave}
+                   onDone={() => onHome(true)}
                 />
             </div>
         </div>

@@ -1,6 +1,7 @@
 
 import { GoogleGenAI, Type as GeminiType, Modality } from '@google/genai';
 import { PerformanceReport, HotTakeGlobalContext, HotTakePreference, HotTakeQuestion, BlindProblem } from '../types';
+import { COACH_CONFIG, HOT_TAKE_CONFIG, WALKIE_TALKIE_CONFIG } from '../config/evaluationPrompts';
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
@@ -54,68 +55,9 @@ export const analyzeStage2_Coach = async (base64Audio: string | null, transcript
     parts.push({ text: promptText });
 
     const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
+        model: COACH_CONFIG.model,
         config: {
-            systemInstruction: `Role: You are the "Stage 2: Coach" for the MicDrop interview preparation app. Your user is a Technical Team Lead / Engineering Manager candidate (balancing technical depth with vision/people management).
-
-            Goal: Analyze the user's interview transcript/audio input and provide "brutally honest" feedback to specific issues.
-            
-            KEY REQUIREMENT: HUMAN STORY REWRITING
-            For every issue identified in the "Areas for Improvement" section, you MUST provide a "Human Rewrite" instead of a generic strategy.
-            
-            The Rewrite Philosophy:
-            - The goal is NOT a polished press release. It is to sound like a colleague grabbing coffee.
-            - Use "Bridge Words": "To be honest...", "Here's the thing...", "I say this with love...".
-            - Use Vulnerability/Humor: Make it relatable.
-            - Use Check-ins: "Does that match what you're seeing?"
-
-            KEY REQUIREMENT: DELIVERY DYNAMICS (Pronunciation & Clarity)
-            You must identify 3 specific moments where the user sounded 'Machine Gun' (Rushed/Monotone) vs 'Maestro' (Varied Pace/Emphasis).
-            - Focus on Technical Terms: Candidates often rush "Convolutional Neural Networks". They should say "Con-vo-LU-tion-al... Neu-ral... NET-works".
-            - Focus on Tone: Detect robotic delivery.
-            - Create a "Drill": Use visual cues like UPPERCASE for stress and '...' for pauses.
-            - NOTE: If no audio file is provided, skip this section or provide general advice based on the text structure (e.g. run-on sentences).
-            
-            Output Format:
-            Provide feedback in this exact structure:
-            1.  **The Diagnosis:** A 1-2 sentence summary of the biggest red flag.
-            2.  **The Fix:** Tactical advice (Structure, Soft Skills).
-            3.  **The "Human" Rewrite (Global):** A rewrite of the most critical part of their answer to sound conversational and high-EQ.
-            4.  **Detailed Improvements:** For each specific issue found, provide:
-                - Question: The specific question or discussion point from the interviewer that prompted this response (extract from transcript, or infer based on the answer).
-                - The Issue: What went wrong.
-                - Specific Instance: Quote the transcript.
-                - The Human Rewrite: Rewrite THAT SPECIFIC part to be better.
-                - Why This Works: Explain the EQ/Soft skills used (e.g. "bridge words signal authenticity").
-
-            KEY REQUIREMENT: FLIP THE TABLE (Question Analysis)
-            Analyze the questions the candidate asked during the interview. This is crucial for showing interest and strategic thinking.
-            
-            For each question the candidate asked:
-            1. Extract the exact question
-            2. Identify the conversation context when it was asked
-            3. Analyze what was good or needs improvement
-            4. If improvement needed, provide a better version that references the conversation context
-            5. Explain why the improved version is stronger
-            
-            Also identify "Missed Opportunities":
-            - Great questions the candidate SHOULD have asked but didn't
-            - Base these on the actual conversation context
-            - Explain why these questions would have demonstrated interest/strategic thinking
-            
-            Philosophy:
-            - Great questions reference specific points from the conversation ("You mentioned X earlier...")
-            - Great questions show curiosity about the role/team/company
-            - Great questions demonstrate the candidate did research and is connecting dots
-            - Avoid generic questions that could be asked anywhere
-            
-            Output Style:
-            - Rating: 0-100 integer scale.
-            - **Separation**: Split into 'detailedFeedback' (Improvements) and 'highlights' (Strengths).
-            - detailedFeedback: MUST use the 'rewrite' and 'explanation' fields instead of generic improvement strategies.
-            - highlights: Areas where the candidate excelled.
-            - flipTheTable: Analysis of questions asked by the candidate and missed opportunities.
-            `,
+            systemInstruction: COACH_CONFIG.systemPrompt,
             responseMimeType: "application/json",
             responseSchema: {
                 type: GeminiType.OBJECT,
@@ -230,23 +172,57 @@ export const analyzeStage2_Coach = async (base64Audio: string | null, transcript
 const WALKIE_REPORT_SCHEMA = {
     type: GeminiType.OBJECT,
     properties: {
-        rating: { type: GeminiType.INTEGER },
-        summary: { type: GeminiType.STRING },
+        rating: { type: GeminiType.INTEGER, description: "Total score 0-100, sum of the 4 rubric scores" },
+        summary: { type: GeminiType.STRING, description: "2-3 sentence assessment of the explanation" },
         suggestions: { type: GeminiType.ARRAY, items: { type: GeminiType.STRING } },
-        pronunciationFeedback: { type: GeminiType.ARRAY, items: { type: GeminiType.OBJECT, properties: { phrase: { type: GeminiType.STRING }, issue: { type: GeminiType.STRING }, practiceDrill: { type: GeminiType.STRING }, reason: { type: GeminiType.STRING } } } },
+        // Strict rubric scoring - each category is 0-25 points
+        rubricScores: {
+            type: GeminiType.OBJECT,
+            description: "Strict rubric scores, each 0-25 points. Total = rating.",
+            properties: {
+                algorithmScore: { type: GeminiType.INTEGER, description: "0-25: Did they identify the correct algorithm/pattern and explain the core logic?" },
+                algorithmFeedback: { type: GeminiType.STRING, description: "What was correct or missing about the algorithm explanation" },
+                edgeCasesScore: { type: GeminiType.INTEGER, description: "0-25: Did they mention relevant edge cases?" },
+                edgeCasesFeedback: { type: GeminiType.STRING, description: "What edge cases were covered or missed" },
+                timeComplexityScore: { type: GeminiType.INTEGER, description: "0-25: Did they correctly analyze time complexity?" },
+                timeComplexityFeedback: { type: GeminiType.STRING, description: "What they said about time complexity vs expected" },
+                spaceComplexityScore: { type: GeminiType.INTEGER, description: "0-25: Did they correctly analyze space complexity?" },
+                spaceComplexityFeedback: { type: GeminiType.STRING, description: "What they said about space complexity vs expected" }
+            },
+            required: ["algorithmScore", "algorithmFeedback", "edgeCasesScore", "edgeCasesFeedback", "timeComplexityScore", "timeComplexityFeedback", "spaceComplexityScore", "spaceComplexityFeedback"]
+        },
         mentalModelChecklist: {
             type: GeminiType.OBJECT,
+            description: "Boolean flags indicating what was covered",
             properties: {
-                logicCorrect: { type: GeminiType.BOOLEAN },
-                edgeCasesMentioned: { type: GeminiType.BOOLEAN },
-                complexityAnalyzed: { type: GeminiType.BOOLEAN },
-                exampleTraced: { type: GeminiType.BOOLEAN },
+                correctPattern: { type: GeminiType.BOOLEAN, description: "Did they identify the correct algorithm pattern?" },
+                logicCorrect: { type: GeminiType.BOOLEAN, description: "Is their core logic/approach correct?" },
+                timeComplexityMentioned: { type: GeminiType.BOOLEAN, description: "Did they mention time complexity?" },
+                timeComplexityCorrect: { type: GeminiType.BOOLEAN, description: "Is their time complexity analysis correct?" },
+                spaceComplexityMentioned: { type: GeminiType.BOOLEAN, description: "Did they mention space complexity?" },
+                spaceComplexityCorrect: { type: GeminiType.BOOLEAN, description: "Is their space complexity analysis correct?" },
+                edgeCasesMentioned: { type: GeminiType.BOOLEAN, description: "Did they mention any edge cases?" }
             }
         },
-        missingEdgeCases: { type: GeminiType.ARRAY, items: { type: GeminiType.STRING } },
-        detectedAutoScore: { type: GeminiType.STRING },
+        missingEdgeCases: { type: GeminiType.ARRAY, items: { type: GeminiType.STRING }, description: "List of edge cases they should have mentioned but didn't" },
+        detectedAutoScore: { type: GeminiType.STRING, description: "'good' if rating >= 75, 'partial' if 50-74, 'missed' if < 50" },
+        detailedFeedback: {
+            type: GeminiType.ARRAY,
+            description: "Specific issues that need improvement",
+            items: {
+                type: GeminiType.OBJECT,
+                properties: {
+                    category: { type: GeminiType.STRING, description: "'Algorithm', 'Edge Cases', 'Time Complexity', or 'Space Complexity'" },
+                    issue: { type: GeminiType.STRING, description: "What was wrong or missing" },
+                    instance: { type: GeminiType.STRING, description: "What they said (or 'Not mentioned' if missing)" },
+                    rewrite: { type: GeminiType.STRING, description: "What they should have said" },
+                    explanation: { type: GeminiType.STRING, description: "Why this matters" }
+                },
+                required: ["category", "issue", "instance", "rewrite", "explanation"]
+            }
+        }
     },
-    required: ["rating", "summary", "detectedAutoScore"]
+    required: ["rating", "summary", "rubricScores", "mentalModelChecklist", "detectedAutoScore", "detailedFeedback", "missingEdgeCases"]
 };
 
 const BLIND_PROBLEM_SCHEMA = {
@@ -271,21 +247,20 @@ const BLIND_PROBLEM_SCHEMA = {
 };
 
 export const analyzeWalkieSession = async (base64Audio: string, polishedText: string, currentProblem: BlindProblem): Promise<PerformanceReport> => {
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `
-            Analyze this coding interview explanation.
-            Problem: ${currentProblem.title}
-            Description: ${currentProblem.prompt}
-            User's Explanation: "${polishedText}"
-            
-            Evaluate if the user correctly identified the pattern, complexity, and edge cases.
-            Set 'detectedAutoScore' to 'good' if the solution is correct and optimal.
-            Set 'detectedAutoScore' to 'partial' if it's correct but suboptimal or missing edge cases.
-            Set 'detectedAutoScore' to 'missed' if the approach is wrong.
+    const prompt = WALKIE_TALKIE_CONFIG.generatePrompt({
+        title: currentProblem.title,
+        prompt: currentProblem.prompt,
+        pattern: currentProblem.pattern,
+        keyIdea: currentProblem.keyIdea,
+        timeComplexity: currentProblem.timeComplexity,
+        spaceComplexity: currentProblem.spaceComplexity,
+        expectedEdgeCases: currentProblem.expectedEdgeCases,
+        steps: currentProblem.steps
+    }, polishedText);
 
-            CRITICAL: Return PURE JSON. Do not include internal monologue or thinking steps in the output strings.
-        `,
+    const response = await ai.models.generateContent({
+        model: WALKIE_TALKIE_CONFIG.model,
+        contents: prompt,
         config: {
             responseMimeType: "application/json",
             responseSchema: WALKIE_REPORT_SCHEMA
@@ -378,28 +353,19 @@ export const evaluateHotTakeInitial = async (
 ): Promise<PerformanceReport> => {
     const prefSummary = preferences.map(p => `- [${p.type}] on "${p.questionText}": ${p.feedback}`).join('\n');
     
+    const prompt = HOT_TAKE_CONFIG.generatePrompt(
+        question,
+        context,
+        transcript,
+        globalContext.interviewer || 'Senior Hiring Manager',
+        globalContext.company || 'a top tech company',
+        globalContext.roundFocus || 'General behavioral interview',
+        prefSummary
+    );
+
     const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: `
-            Evaluate this interview answer (Hot Take Protocol).
-            Role: ${globalContext.interviewer || 'Senior Hiring Manager'} at ${globalContext.company || 'a top tech company'}.
-            Round Focus: ${globalContext.roundFocus || 'General behavioral interview'}.
-            User Preferences History:
-            ${prefSummary || 'No previous preferences recorded.'}
-
-            Question: "${question}"
-            Context/Intent: "${context}"
-            Answer: "${transcript}"
-
-            Generate a performance report including:
-            1. A score (0-100).
-            2. A "hotTakeRubric" with scores (each 0-25) for: clarity, technicalDepth, strategicThinking, executivePresence.
-            3. A "followUpQuestion" that probes deeper based on the weakness of the answer. Make it specific and challenging.
-            4. A "hotTakeMasterRewrite" that improves the answer to be executive-level.
-            5. A brief "summary" critiquing the response.
-
-            CRITICAL: Return PURE JSON. Do not include internal monologue, "thinking steps", or parenthetical notes inside the JSON string fields.
-        `,
+        model: HOT_TAKE_CONFIG.model,
+        contents: prompt,
         config: {
             responseMimeType: "application/json",
             responseSchema: HOT_TAKE_REPORT_SCHEMA

@@ -256,12 +256,14 @@ const MainApp: React.FC = () => {
           />
         } />
         
-        <Route path="/walkie-talkie" element={
-          <WalkieTalkieView 
+<Route path="/walkie-talkie" element={
+          <WalkieTalkieView
             onHome={goHome}
             onSaveReport={saveReport}
             masteredIds={masteredIds}
             onMastered={markAsMastered}
+            isSaved={isSaved}
+            onToggleSave={toggleSaveItem}
           />
         } />
         

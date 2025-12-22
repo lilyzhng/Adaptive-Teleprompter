@@ -1,10 +1,18 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play } from 'lucide-react';
+import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play, Award, Zap, Code2 } from 'lucide-react';
 import { SavedItem, SavedReport } from '../types';
 import PerformanceReportComponent from '../components/PerformanceReport';
 import { titleToSlug, findReportBySlug } from '../utils';
+
+// Report type configuration for display
+type ReportTypeFilter = 'all' | 'coach' | 'hot-take' | 'walkie';
+const REPORT_TYPE_CONFIG: Record<Exclude<ReportTypeFilter, 'all'>, { label: string; title: string; color: string; icon: React.ReactNode }> = {
+    'coach': { label: 'Interview', title: 'Interview Reports', color: 'gold', icon: <Award size={12} /> },
+    'hot-take': { label: 'Tech Drill', title: 'Tech Drill Reports', color: 'purple-500', icon: <Zap size={12} /> },
+    'walkie': { label: 'LeetCode', title: 'LeetCode Reports', color: 'blue-500', icon: <Code2 size={12} /> }
+};
 
 interface DatabaseViewProps {
     savedItems: SavedItem[];
@@ -31,11 +39,28 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
 }) => {
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState<'reports' | 'snippets'>('reports');
+    const [reportTypeFilter, setReportTypeFilter] = useState<ReportTypeFilter>('all');
     const selectedReport = selectedReportSlug ? findReportBySlug(savedReports, selectedReportSlug) : null;
     
     // Edit State
     const [editingReportId, setEditingReportId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState<{ title: string; date: string }>({ title: '', date: '' });
+    
+    // Filter reports based on selected type
+    const filteredReports = savedReports.filter(r => {
+        if (reportTypeFilter === 'all') return true;
+        // Include 'rehearsal' with 'coach' type
+        if (reportTypeFilter === 'coach') return r.type === 'coach' || r.type === 'rehearsal';
+        return r.type === reportTypeFilter;
+    });
+    
+    // Count reports by type
+    const reportCounts = {
+        all: savedReports.length,
+        coach: savedReports.filter(r => r.type === 'coach' || r.type === 'rehearsal').length,
+        'hot-take': savedReports.filter(r => r.type === 'hot-take').length,
+        walkie: savedReports.filter(r => r.type === 'walkie').length
+    };
 
     const startEditing = (report: SavedReport) => {
         setEditingReportId(report.id);
@@ -80,6 +105,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                      <div className="max-w-4xl mx-auto pb-20">
                          <PerformanceReportComponent 
                             report={selectedReport.reportData}
+                            reportType={selectedReport.type === 'rehearsal' ? 'coach' : selectedReport.type as 'coach' | 'walkie' | 'hot-take'}
                             context={selectedReport.title}
                             isSaved={isSaved} 
                             onToggleSave={onToggleSave} 
@@ -127,37 +153,84 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
              <div className="flex-1 overflow-y-auto p-8 relative min-h-0">
                  <div className="max-w-4xl mx-auto pb-20">
                      
-                     {/* --- REPORTS TAB (Coach Reports Only) --- */}
+                     {/* --- REPORTS TAB --- */}
                      {activeTab === 'reports' && (
-                         savedReports.filter(r => r.type === 'coach').length === 0 ? (
-                            <div className="text-center py-20">
-                                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6 text-gray-400">
-                                    <FileText size={32} />
-                                </div>
-                                <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">No Full Interview Reports</h3>
-                                <p className="text-gray-500 max-w-sm mx-auto">
-                                    Your full interview coaching analysis reports will appear here automatically after you complete Stage 2 analysis.
-                                </p>
-                            </div>
-                         ) : (
-                             <div className="space-y-4">
-                                 {savedReports.filter(r => r.type === 'coach').map(report => {
-                                     const isEditing = editingReportId === report.id;
-                                     return (
-                                     <div key={report.id} className="bg-white rounded-xl p-6 shadow-sm border border-[#EBE8E0] hover:shadow-md transition-shadow flex items-center gap-6 group">
-                                         {/* Score Badge */}
-                                         <div className="shrink-0 relative w-16 h-16 flex items-center justify-center">
-                                            <div className="absolute inset-0 rounded-full" style={{ background: `conic-gradient(#C7A965 ${report.rating}%, #F0EBE0 ${report.rating}% 100%)` }}></div>
-                                            <div className="absolute inset-1 bg-white rounded-full flex flex-col items-center justify-center z-10">
-                                                <span className="text-lg font-serif font-bold text-charcoal">{report.rating}</span>
-                                            </div>
-                                         </div>
+                         <>
+                             {/* Report Type Filter */}
+                             <div className="flex flex-wrap gap-2 mb-6">
+                                 <button
+                                     onClick={() => setReportTypeFilter('all')}
+                                     className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all ${reportTypeFilter === 'all' ? 'bg-charcoal text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-gray-300'}`}
+                                 >
+                                     All ({reportCounts.all})
+                                 </button>
+                                 <button
+                                     onClick={() => setReportTypeFilter('coach')}
+                                     className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-1.5 ${reportTypeFilter === 'coach' ? 'bg-gold text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-gold/50'}`}
+                                 >
+                                     <Award size={12} /> Interview ({reportCounts.coach})
+                                 </button>
+                                 <button
+                                     onClick={() => setReportTypeFilter('hot-take')}
+                                     className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-1.5 ${reportTypeFilter === 'hot-take' ? 'bg-purple-500 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-purple-300'}`}
+                                 >
+                                     <Zap size={12} /> Tech Drill ({reportCounts['hot-take']})
+                                 </button>
+                                 <button
+                                     onClick={() => setReportTypeFilter('walkie')}
+                                     className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-1.5 ${reportTypeFilter === 'walkie' ? 'bg-blue-500 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-blue-300'}`}
+                                 >
+                                     <Code2 size={12} /> LeetCode ({reportCounts.walkie})
+                                 </button>
+                             </div>
 
-                                         <div className="flex-1 min-w-0">
-                                             <div className="flex items-center gap-2 mb-1">
-                                                 <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${report.type === 'coach' ? 'bg-gold/10 text-gold' : 'bg-charcoal/10 text-charcoal'}`}>
-                                                     {report.type === 'coach' ? 'Coach' : 'Rehearsal'}
-                                                 </span>
+                             {filteredReports.length === 0 ? (
+                                <div className="text-center py-20">
+                                    <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6 text-gray-400">
+                                        <FileText size={32} />
+                                    </div>
+                                    <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">
+                                        {reportTypeFilter === 'all' ? 'No Reports Yet' : `No ${REPORT_TYPE_CONFIG[reportTypeFilter as keyof typeof REPORT_TYPE_CONFIG]?.title || 'Reports'}`}
+                                    </h3>
+                                    <p className="text-gray-500 max-w-sm mx-auto">
+                                        {reportTypeFilter === 'coach' && 'Complete an interview analysis in The Coach to see reports here.'}
+                                        {reportTypeFilter === 'hot-take' && 'Complete a Hot Take drill session to see reports here.'}
+                                        {reportTypeFilter === 'walkie' && 'Practice problems in WalkieTalkie to see reports here.'}
+                                        {reportTypeFilter === 'all' && 'Your performance reports from all features will appear here.'}
+                                    </p>
+                                </div>
+                             ) : (
+                                 <div className="space-y-4">
+                                     {filteredReports.map(report => {
+                                         const isEditing = editingReportId === report.id;
+                                         const typeConfig = REPORT_TYPE_CONFIG[report.type === 'rehearsal' ? 'coach' : report.type as keyof typeof REPORT_TYPE_CONFIG];
+                                         const badgeColors = {
+                                             'coach': 'bg-gold/10 text-gold',
+                                             'rehearsal': 'bg-gold/10 text-gold',
+                                             'hot-take': 'bg-purple-500/10 text-purple-600',
+                                             'walkie': 'bg-blue-500/10 text-blue-600'
+                                         };
+                                         const ringColors = {
+                                             'coach': '#C7A965',
+                                             'rehearsal': '#C7A965',
+                                             'hot-take': '#a855f7',
+                                             'walkie': '#3b82f6'
+                                         };
+                                         return (
+                                         <div key={report.id} className="bg-white rounded-xl p-6 shadow-sm border border-[#EBE8E0] hover:shadow-md transition-shadow flex items-center gap-6 group">
+                                             {/* Score Badge */}
+                                             <div className="shrink-0 relative w-16 h-16 flex items-center justify-center">
+                                                <div className="absolute inset-0 rounded-full" style={{ background: `conic-gradient(${ringColors[report.type]} ${report.rating}%, #F0EBE0 ${report.rating}% 100%)` }}></div>
+                                                <div className="absolute inset-1 bg-white rounded-full flex flex-col items-center justify-center z-10">
+                                                    <span className="text-lg font-serif font-bold text-charcoal">{report.rating}</span>
+                                                </div>
+                                             </div>
+
+                                             <div className="flex-1 min-w-0">
+                                                 <div className="flex items-center gap-2 mb-1">
+                                                     <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full flex items-center gap-1 ${badgeColors[report.type]}`}>
+                                                         {typeConfig?.icon} {typeConfig?.label || report.type}
+                                                     </span>
                                                  
                                                  {isEditing ? (
                                                      <input 
@@ -229,10 +302,11 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                  </>
                                              )}
                                          </div>
-                                     </div>
-                                 )})}
-                             </div>
-                         )
+                                    </div>
+                                )})}
+                            </div>
+                         )}
+                         </>
                      )}
 
                      {/* --- SNIPPETS TAB --- */}
