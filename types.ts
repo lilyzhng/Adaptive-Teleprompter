@@ -173,6 +173,7 @@ export interface BlindProblem {
   constraints: string[];
   pattern: string;
   keyIdea: string;
+  detailedHint?: string; // More thorough walkthrough of problem-solving approach
   skeleton: string;
   timeComplexity: string;
   spaceComplexity: string;

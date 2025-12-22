@@ -18,6 +18,7 @@ export interface Database {
           constraints: string[]
           pattern: string
           key_idea: string
+          detailed_hint: string | null
           skeleton: string
           time_complexity: string
           space_complexity: string
@@ -36,6 +37,7 @@ export interface Database {
           constraints?: string[]
           pattern: string
           key_idea: string
+          detailed_hint?: string | null
           skeleton: string
           time_complexity: string
           space_complexity: string
@@ -54,6 +56,7 @@ export interface Database {
           constraints?: string[]
           pattern?: string
           key_idea?: string
+          detailed_hint?: string | null
           skeleton?: string
           time_complexity?: string
           space_complexity?: string

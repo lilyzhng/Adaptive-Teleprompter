@@ -260,6 +260,7 @@ const mapDbProblemToBlindProblem = (row: any): BlindProblem => ({
     constraints: row.constraints as string[],
     pattern: row.pattern,
     keyIdea: row.key_idea,
+    detailedHint: row.detailed_hint || undefined,
     skeleton: row.skeleton,
     timeComplexity: row.time_complexity,
     spaceComplexity: row.space_complexity,

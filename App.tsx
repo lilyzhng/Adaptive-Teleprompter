@@ -64,6 +64,9 @@ const MainApp: React.FC = () => {
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
   
+  // Track if we've loaded data for the current user to prevent re-fetching
+  const loadedUserIdRef = React.useRef<string | null>(null);
+  
   // Walkie-Talkie mastery state
   const [masteredIds, setMasteredIds] = useState<string[]>(() => {
       try {
@@ -89,11 +92,18 @@ const MainApp: React.FC = () => {
       if (!user) {
           setSavedItems([]);
           setSavedReports([]);
+          loadedUserIdRef.current = null;
+          return;
+      }
+
+      // Skip if we already loaded data for this user
+      if (loadedUserIdRef.current === user.id) {
           return;
       }
 
       const loadUserData = async () => {
           setIsLoadingData(true);
+          loadedUserIdRef.current = user.id;
           try {
               const [items, reports] = await Promise.all([
                   db.fetchSavedItems(user.id),
@@ -103,6 +113,8 @@ const MainApp: React.FC = () => {
               setSavedReports(reports);
           } catch (e) {
               console.error("Failed to load user data from database", e);
+              // Reset ref so we can retry
+              loadedUserIdRef.current = null;
           } finally {
               setIsLoadingData(false);
           }
@@ -114,7 +126,8 @@ const MainApp: React.FC = () => {
 
   // -- Snippet Logic --
   const toggleSaveItem = useCallback(async (item: Omit<SavedItem, 'id' | 'date'>) => {
-      if (!user) return;
+      const userId = user?.id;
+      if (!userId) return;
       
       const existingItem = savedItems.find(i => i.title === item.title && i.content === item.content);
       
@@ -126,12 +139,12 @@ const MainApp: React.FC = () => {
           }
       } else {
           // Create in database
-          const newItem = await db.createSavedItem(user.id, item);
+          const newItem = await db.createSavedItem(userId, item);
           if (newItem) {
               setSavedItems(prev => [newItem, ...prev]);
           }
       }
-  }, [user, savedItems]);
+  }, [user?.id, savedItems]);
   
   const isSaved = useCallback((title: string, content: string) => {
       return savedItems.some(i => i.title === title && i.content === content);
@@ -146,13 +159,14 @@ const MainApp: React.FC = () => {
 
   // -- Report Logic --
   const saveReport = useCallback(async (title: string, type: 'coach' | 'rehearsal' | 'walkie' | 'hot-take', report: PerformanceReport) => {
-      if (!user) return;
+      const userId = user?.id;
+      if (!userId) return;
       
-      const newReport = await db.createSavedReport(user.id, title, type, report);
+      const newReport = await db.createSavedReport(userId, title, type, report);
       if (newReport) {
           setSavedReports(prev => [newReport, ...prev]);
       }
-  }, [user]);
+  }, [user?.id]);
 
   const updateSavedReport = useCallback(async (id: string, updates: Partial<SavedReport>) => {
       const success = await db.updateSavedReport(id, updates);
@@ -171,17 +185,17 @@ const MainApp: React.FC = () => {
   }, []);
 
   // -- Navigation --
-  const handleNavigate = (view: 'analysis' | 'database' | 'hot-take' | 'walkie-talkie') => {
+  const handleNavigate = useCallback((view: 'analysis' | 'database' | 'hot-take' | 'walkie-talkie') => {
       navigate(`/${view}`);
-  };
+  }, [navigate]);
 
-  const goHome = (force: boolean | unknown = false) => {
+  const goHome = useCallback((force: boolean | unknown = false) => {
       const shouldForce = force === true;
       if (!shouldForce) {
           if (!window.confirm("Are you sure you want to go back? Current progress will be lost.")) return;
       }
       navigate('/');
-  };
+  }, [navigate]);
 
     if (isLoading) {
       return <div className="h-screen w-screen bg-cream flex items-center justify-center">
