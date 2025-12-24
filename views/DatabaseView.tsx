@@ -1,12 +1,77 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play, Award, Zap, Code2, GraduationCap, Layers } from 'lucide-react';
+import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play, Award, Zap, Code2, GraduationCap, Layers, TrendingUp, Flame, Target, ChevronLeft, ChevronRight, Clock, CheckCircle2, Circle, AlertCircle, BarChart3 } from 'lucide-react';
 import { SavedItem, SavedReport } from '../types';
+import { StudyStats } from '../types/database';
 import PerformanceReportComponent from '../components/PerformanceReport';
 import TeachingReportComponent from '../components/TeachingReport';
 import ReadinessReportComponent from '../components/ReadinessReport';
 import { titleToSlug, findReportBySlug } from '../utils';
+import { useAuth } from '../contexts/AuthContext';
+import { 
+    getSettingsWithDefaults, 
+    getProgressGrid, 
+    GroupedProblems 
+} from '../services/spacedRepetitionService';
+import { 
+    fetchAllUserProgress, 
+    fetchDueReviews, 
+    fetchDueTomorrow 
+} from '../services/databaseService';
+
+// Helper to get date string in YYYY-MM-DD format
+const getDateString = (date: Date | string): string => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toISOString().split('T')[0];
+};
+
+// Helper to count mastered questions by date from saved reports
+const countMasteredByDate = (reports: SavedReport[]): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  
+  const relevantReports = reports.filter(r => {
+    if (r.type === 'walkie') {
+      return r.reportData?.detectedAutoScore === 'good';
+    }
+    if (r.type === 'teach') {
+      const teachingData = r.reportData?.teachingReportData;
+      return teachingData?.studentOutcome === 'can_implement' && (teachingData?.teachingScore ?? 0) >= 75;
+    }
+    return false;
+  });
+  
+  for (const report of relevantReports) {
+    const dateStr = getDateString(report.date);
+    counts[dateStr] = (counts[dateStr] || 0) + 1;
+  }
+  
+  return counts;
+};
+
+// Count all attempts (not just mastered) by date
+const countAttemptsByDate = (reports: SavedReport[]): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  
+  const relevantReports = reports.filter(r => r.type === 'walkie' || r.type === 'teach');
+  
+  for (const report of relevantReports) {
+    const dateStr = getDateString(report.date);
+    counts[dateStr] = (counts[dateStr] || 0) + 1;
+  }
+  
+  return counts;
+};
+
+// Get days in a month
+const getDaysInMonth = (year: number, month: number): number => {
+  return new Date(year, month + 1, 0).getDate();
+};
+
+// Get first day of month (0 = Sunday, 1 = Monday, etc.)
+const getFirstDayOfMonth = (year: number, month: number): number => {
+  return new Date(year, month, 1).getDay();
+};
 
 // Report type configuration for display
 type ReportTypeFilter = 'all' | 'coach' | 'hot-take' | 'walkie' | 'teach' | 'readiness';
@@ -42,13 +107,140 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
     selectedReportSlug
 }) => {
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState<'reports' | 'snippets'>('reports');
+    const { user } = useAuth();
+    const [activeTab, setActiveTab] = useState<'reports' | 'snippets' | 'progress'>('reports');
     const [reportTypeFilter, setReportTypeFilter] = useState<ReportTypeFilter>('all');
     const selectedReport = selectedReportSlug ? findReportBySlug(savedReports, selectedReportSlug) : null;
     
     // Edit State
     const [editingReportId, setEditingReportId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState<{ title: string; date: string }>({ title: '', date: '' });
+    
+    // Calendar navigation state for Progress tab
+    const [calendarDate, setCalendarDate] = useState(() => new Date());
+    
+    // Spaced Repetition State
+    const [studyStats, setStudyStats] = useState<StudyStats | null>(null);
+    const [progressGrid, setProgressGrid] = useState<GroupedProblems[]>([]);
+    const [dueToday, setDueToday] = useState<Array<{ problemTitle: string; bestScore: number | null; lastReviewedAt: Date | null }>>([]);
+    const [dueTomorrow, setDueTomorrow] = useState<Array<{ problemTitle: string }>>([]);
+    const [isLoadingProgress, setIsLoadingProgress] = useState(false);
+    
+    // Load spaced repetition data when Progress tab is active
+    useEffect(() => {
+        if (activeTab !== 'progress' || !user?.id) return;
+        
+        const loadProgressData = async () => {
+            setIsLoadingProgress(true);
+            try {
+                const [settings, allProgress, dueReviews, dueTomorrowData, grid] = await Promise.all([
+                    getSettingsWithDefaults(user.id),
+                    fetchAllUserProgress(user.id),
+                    fetchDueReviews(user.id),
+                    fetchDueTomorrow(user.id),
+                    getProgressGrid(user.id)
+                ]);
+                
+                // Calculate study stats
+                const today = new Date();
+                const startDate = new Date(settings.startDate);
+                const daysPassed = Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+                const daysLeft = Math.max(1, settings.targetDays - daysPassed);
+                
+                const newCount = 75 - allProgress.length;
+                const learningCount = allProgress.filter(p => p.status === 'learning').length;
+                const masteredCount = allProgress.filter(p => p.status === 'mastered').length;
+                
+                // Calculate today's queue
+                const remainingNew = 75 - allProgress.filter(p => p.status !== 'new').length;
+                const effectiveDaysLeft = Math.max(1, daysLeft - 2);
+                const newPerDay = Math.ceil(remainingNew / effectiveDaysLeft);
+                const reviewCount = dueReviews.length;
+                const newProblemCount = Math.min(newPerDay, settings.dailyCap - reviewCount);
+                
+                setStudyStats({
+                    totalProblems: 75,
+                    newCount,
+                    learningCount,
+                    masteredCount,
+                    dueToday: dueReviews.length,
+                    dueTomorrow: dueTomorrowData.length,
+                    daysLeft,
+                    onPace: allProgress.filter(p => p.status !== 'new').length >= (daysPassed * (75 / settings.targetDays)),
+                    todaysQueue: {
+                        newProblems: Math.max(0, newProblemCount),
+                        reviews: reviewCount,
+                        total: Math.min(settings.dailyCap, reviewCount + newProblemCount)
+                    }
+                });
+                
+                setDueToday(dueReviews.map(p => ({
+                    problemTitle: p.problemTitle,
+                    bestScore: p.bestScore,
+                    lastReviewedAt: p.lastReviewedAt
+                })));
+                
+                setDueTomorrow(dueTomorrowData.map(p => ({
+                    problemTitle: p.problemTitle
+                })));
+                
+                setProgressGrid(grid);
+            } catch (error) {
+                console.error('Error loading progress data:', error);
+            } finally {
+                setIsLoadingProgress(false);
+            }
+        };
+        
+        loadProgressData();
+    }, [activeTab, user?.id]);
+    
+    // Compute daily stats
+    const masteredByDate = useMemo(() => countMasteredByDate(savedReports), [savedReports]);
+    const attemptsByDate = useMemo(() => countAttemptsByDate(savedReports), [savedReports]);
+    
+    // Calculate streak
+    const currentStreak = useMemo(() => {
+        let streak = 0;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        for (let i = 0; i < 365; i++) {
+            const date = new Date(today);
+            date.setDate(date.getDate() - i);
+            const dateStr = getDateString(date);
+            
+            if (masteredByDate[dateStr] && masteredByDate[dateStr] > 0) {
+                streak++;
+            } else if (i > 0) {
+                // Allow today to be 0 without breaking streak
+                break;
+            }
+        }
+        return streak;
+    }, [masteredByDate]);
+    
+    // Calculate total mastered
+    const totalMastered = useMemo(() => {
+        return Object.values(masteredByDate).reduce((sum, count) => sum + count, 0);
+    }, [masteredByDate]);
+    
+    // Calculate this week's total
+    const thisWeekTotal = useMemo(() => {
+        const today = new Date();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
+        startOfWeek.setHours(0, 0, 0, 0);
+        
+        let total = 0;
+        for (let i = 0; i < 7; i++) {
+            const date = new Date(startOfWeek);
+            date.setDate(date.getDate() + i);
+            const dateStr = getDateString(date);
+            total += masteredByDate[dateStr] || 0;
+        }
+        return total;
+    }, [masteredByDate]);
     
     // Filter reports based on selected type
     const filteredReports = savedReports.filter(r => {
@@ -119,6 +311,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                 report={teachingData}
                                 juniorSummary={selectedReport.reportData.juniorSummary}
                                 problemTitle={selectedReport.title}
+                                problem={selectedReport.reportData.teachingProblem}
                                 onContinue={() => navigate('/database')}
                                 onTryAgain={() => navigate('/walkie-talkie', { 
                                     state: { teachAgainProblem: selectedReport.title } 
@@ -175,13 +368,19 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
              <div className="flex justify-center border-b border-[#E6E6E6] bg-white">
                  <button 
                     onClick={() => setActiveTab('reports')}
-                    className={`px-8 py-4 text-sm font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'reports' ? 'border-gold text-charcoal' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+                    className={`px-6 sm:px-8 py-4 text-xs sm:text-sm font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'reports' ? 'border-gold text-charcoal' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
                  >
                     Full Reports
                  </button>
                  <button 
+                    onClick={() => setActiveTab('progress')}
+                    className={`px-6 sm:px-8 py-4 text-xs sm:text-sm font-bold uppercase tracking-widest border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'progress' ? 'border-gold text-charcoal' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+                 >
+                    <TrendingUp size={14} /> Progress
+                 </button>
+                 <button 
                     onClick={() => setActiveTab('snippets')}
-                    className={`px-8 py-4 text-sm font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'snippets' ? 'border-gold text-charcoal' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+                    className={`px-6 sm:px-8 py-4 text-xs sm:text-sm font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'snippets' ? 'border-gold text-charcoal' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
                  >
                     Saved Snippets
                  </button>
@@ -360,6 +559,408 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                             </div>
                          )}
                          </>
+                     )}
+
+                     {/* --- PROGRESS TAB --- */}
+                     {activeTab === 'progress' && (
+                         <div className="space-y-8">
+                             {/* Target Completion Tracker */}
+                             {studyStats && (
+                                 <div className="bg-gradient-to-r from-charcoal to-gray-800 rounded-2xl p-6 shadow-lg text-white">
+                                     <div className="flex items-center justify-between mb-4">
+                                         <div className="flex items-center gap-3">
+                                             <Calendar size={20} className="text-gold" />
+                                             <span className="text-sm font-bold uppercase tracking-widest text-gold">Study Plan</span>
+                                         </div>
+                                         <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                                             studyStats.onPace 
+                                                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
+                                                 : 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+                                         }`}>
+                                             {studyStats.onPace ? 'On Pace' : 'Behind'}
+                                         </div>
+                                     </div>
+                                     
+                                     {/* Progress Bar */}
+                                     <div className="mb-4">
+                                         <div className="flex justify-between text-xs text-gray-400 mb-2">
+                                             <span>{studyStats.masteredCount + studyStats.learningCount} / 75 introduced</span>
+                                             <span>{studyStats.daysLeft} days left</span>
+                                         </div>
+                                         <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
+                                             <div 
+                                                 className="h-full bg-gradient-to-r from-gold to-yellow-400 transition-all duration-500"
+                                                 style={{ width: `${((studyStats.masteredCount + studyStats.learningCount) / 75) * 100}%` }}
+                                             />
+                                         </div>
+                                     </div>
+                                     
+                                     {/* Today's Queue */}
+                                     <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                                         <div className="text-xs text-gray-400 uppercase tracking-widest mb-2">Today's Queue</div>
+                                         <div className="flex items-center gap-4">
+                                             <div className="flex items-center gap-2">
+                                                 <div className="w-3 h-3 rounded-full bg-blue-400"></div>
+                                                 <span className="text-sm">{studyStats.todaysQueue.newProblems} new</span>
+                                             </div>
+                                             <div className="flex items-center gap-2">
+                                                 <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+                                                 <span className="text-sm">{studyStats.todaysQueue.reviews} reviews</span>
+                                             </div>
+                                             <div className="text-gray-500">|</div>
+                                             <span className="text-sm font-bold text-gold">{studyStats.todaysQueue.total} total</span>
+                                         </div>
+                                     </div>
+                                 </div>
+                             )}
+                             
+                             {/* Stats Summary Cards - Enhanced */}
+                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
+                                     <div className="flex items-center gap-2 mb-2">
+                                         <Flame size={14} className="text-orange-500" />
+                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Streak</span>
+                                     </div>
+                                     <div className="text-3xl font-bold text-charcoal">{currentStreak}</div>
+                                     <div className="text-xs text-gray-500">days</div>
+                                 </div>
+                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
+                                     <div className="flex items-center gap-2 mb-2">
+                                         <Circle size={14} className="text-blue-500" />
+                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">New</span>
+                                     </div>
+                                     <div className="text-3xl font-bold text-blue-500">{studyStats?.newCount ?? 75}</div>
+                                     <div className="text-xs text-gray-500">not started</div>
+                                 </div>
+                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
+                                     <div className="flex items-center gap-2 mb-2">
+                                         <Clock size={14} className="text-yellow-500" />
+                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Learning</span>
+                                     </div>
+                                     <div className="text-3xl font-bold text-yellow-500">{studyStats?.learningCount ?? 0}</div>
+                                     <div className="text-xs text-gray-500">in progress</div>
+                                 </div>
+                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
+                                     <div className="flex items-center gap-2 mb-2">
+                                         <CheckCircle2 size={14} className="text-emerald-500" />
+                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mastered</span>
+                                     </div>
+                                     <div className="text-3xl font-bold text-emerald-500">{studyStats?.masteredCount ?? 0}</div>
+                                     <div className="text-xs text-gray-500">completed</div>
+                                 </div>
+                             </div>
+                             
+                             {/* Blind 75 Problem Grid */}
+                             {progressGrid.length > 0 && (
+                                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#EBE8E0]">
+                                     <div className="flex items-center justify-between mb-6">
+                                         <div className="flex items-center gap-2">
+                                             <BarChart3 size={18} className="text-charcoal" />
+                                             <h3 className="text-lg font-bold text-charcoal">Blind 75 Progress</h3>
+                                         </div>
+                                         <div className="text-sm text-gray-500">
+                                             {studyStats?.masteredCount ?? 0}/75 mastered ({Math.round(((studyStats?.masteredCount ?? 0) / 75) * 100)}%)
+                                         </div>
+                                     </div>
+                                     
+                                     <div className="space-y-6">
+                                         {progressGrid.map((group) => (
+                                             <div key={group.groupName}>
+                                                 <div className="flex items-center justify-between mb-2">
+                                                     <span className="text-sm font-medium text-charcoal">{group.groupName}</span>
+                                                     <span className="text-xs text-gray-500">
+                                                         {group.masteredCount}/{group.totalCount}
+                                                         {group.masteredCount === group.totalCount && ' ✓'}
+                                                     </span>
+                                                 </div>
+                                                 <div className="flex flex-wrap gap-1.5">
+                                                     {group.problems.map((item) => {
+                                                         const status = item.progress?.status || 'new';
+                                                         const isDue = item.isDueToday;
+                                                         
+                                                         return (
+                                                             <div
+                                                                 key={item.problem.id}
+                                                                 className={`w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold cursor-pointer transition-all hover:scale-110 ${
+                                                                     status === 'mastered' 
+                                                                         ? 'bg-emerald-500 text-white' 
+                                                                         : status === 'learning'
+                                                                             ? isDue 
+                                                                                 ? 'bg-blue-500 text-white ring-2 ring-blue-300' 
+                                                                                 : 'bg-yellow-400 text-charcoal'
+                                                                             : 'bg-gray-100 text-gray-400'
+                                                                 }`}
+                                                                 title={`${item.problem.title} (${item.problem.difficulty})${
+                                                                     item.progress ? ` - Score: ${item.progress.bestScore ?? 'N/A'}` : ''
+                                                                 }${isDue ? ' - Due Today!' : ''}`}
+                                                             >
+                                                                 {status === 'mastered' ? '✓' : status === 'learning' ? (isDue ? '!' : '○') : ''}
+                                                             </div>
+                                                         );
+                                                     })}
+                                                 </div>
+                                             </div>
+                                         ))}
+                                     </div>
+                                     
+                                     {/* Legend */}
+                                     <div className="flex items-center justify-center gap-6 mt-6 pt-4 border-t border-gray-100">
+                                         <div className="flex items-center gap-2">
+                                             <div className="w-4 h-4 rounded bg-emerald-500"></div>
+                                             <span className="text-xs text-gray-500">Mastered</span>
+                                         </div>
+                                         <div className="flex items-center gap-2">
+                                             <div className="w-4 h-4 rounded bg-yellow-400"></div>
+                                             <span className="text-xs text-gray-500">Learning</span>
+                                         </div>
+                                         <div className="flex items-center gap-2">
+                                             <div className="w-4 h-4 rounded bg-blue-500"></div>
+                                             <span className="text-xs text-gray-500">Due Today</span>
+                                         </div>
+                                         <div className="flex items-center gap-2">
+                                             <div className="w-4 h-4 rounded bg-gray-100"></div>
+                                             <span className="text-xs text-gray-500">New</span>
+                                         </div>
+                                     </div>
+                                 </div>
+                             )}
+                             
+                             {/* Review Queue Preview */}
+                             {(dueToday.length > 0 || dueTomorrow.length > 0) && (
+                                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#EBE8E0]">
+                                     <div className="flex items-center gap-2 mb-4">
+                                         <Clock size={18} className="text-charcoal" />
+                                         <h3 className="text-lg font-bold text-charcoal">Review Queue</h3>
+                                     </div>
+                                     
+                                     {dueToday.length > 0 && (
+                                         <div className="mb-4">
+                                             <div className="flex items-center gap-2 mb-3">
+                                                 <AlertCircle size={14} className="text-blue-500" />
+                                                 <span className="text-sm font-medium text-charcoal">Due Today ({dueToday.length})</span>
+                                             </div>
+                                             <div className="space-y-2">
+                                                 {dueToday.slice(0, 5).map((item) => (
+                                                     <div 
+                                                         key={item.problemTitle}
+                                                         className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border border-blue-100"
+                                                     >
+                                                         <span className="text-sm text-charcoal">{item.problemTitle}</span>
+                                                         <div className="flex items-center gap-2">
+                                                             {item.bestScore && (
+                                                                 <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                                                                     item.bestScore >= 75 
+                                                                         ? 'bg-emerald-100 text-emerald-700' 
+                                                                         : item.bestScore >= 50 
+                                                                             ? 'bg-yellow-100 text-yellow-700'
+                                                                             : 'bg-red-100 text-red-700'
+                                                                 }`}>
+                                                                     {item.bestScore} pts
+                                                                 </span>
+                                                             )}
+                                                             {item.lastReviewedAt && (
+                                                                 <span className="text-xs text-gray-400">
+                                                                     {Math.floor((new Date().getTime() - new Date(item.lastReviewedAt).getTime()) / (1000 * 60 * 60 * 24))}d ago
+                                                                 </span>
+                                                             )}
+                                                         </div>
+                                                     </div>
+                                                 ))}
+                                                 {dueToday.length > 5 && (
+                                                     <div className="text-xs text-gray-500 text-center py-2">
+                                                         + {dueToday.length - 5} more
+                                                     </div>
+                                                 )}
+                                             </div>
+                                         </div>
+                                     )}
+                                     
+                                     {dueTomorrow.length > 0 && (
+                                         <div>
+                                             <div className="flex items-center gap-2 mb-3">
+                                                 <Clock size={14} className="text-gray-400" />
+                                                 <span className="text-sm font-medium text-gray-500">Due Tomorrow ({dueTomorrow.length})</span>
+                                             </div>
+                                             <div className="flex flex-wrap gap-2">
+                                                 {dueTomorrow.slice(0, 8).map((item) => (
+                                                     <span 
+                                                         key={item.problemTitle}
+                                                         className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded"
+                                                     >
+                                                         {item.problemTitle}
+                                                     </span>
+                                                 ))}
+                                                 {dueTomorrow.length > 8 && (
+                                                     <span className="text-xs px-2 py-1 text-gray-400">
+                                                         +{dueTomorrow.length - 8} more
+                                                     </span>
+                                                 )}
+                                             </div>
+                                         </div>
+                                     )}
+                                 </div>
+                             )}
+                             
+                             {/* Loading indicator */}
+                             {isLoadingProgress && (
+                                 <div className="text-center py-8 text-gray-500">
+                                     Loading spaced repetition data...
+                                 </div>
+                             )}
+
+                             {/* Calendar View */}
+                             <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#EBE8E0]">
+                                 <div className="flex items-center justify-between mb-6">
+                                     <h3 className="text-lg font-bold text-charcoal">
+                                         {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                                     </h3>
+                                     <div className="flex items-center gap-2">
+                                         <button 
+                                             onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))}
+                                             className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                                         >
+                                             <ChevronLeft size={18} className="text-gray-600" />
+                                         </button>
+                                         <button 
+                                             onClick={() => setCalendarDate(new Date())}
+                                             className="px-3 py-1.5 text-xs font-bold uppercase tracking-widest text-gold hover:bg-gold/10 rounded-lg transition-colors"
+                                         >
+                                             Today
+                                         </button>
+                                         <button 
+                                             onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))}
+                                             className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                                         >
+                                             <ChevronRight size={18} className="text-gray-600" />
+                                         </button>
+                                     </div>
+                                 </div>
+                                 
+                                 {/* Calendar Grid */}
+                                 <div className="grid grid-cols-7 gap-1">
+                                     {/* Day Headers */}
+                                     {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                                         <div key={day} className="text-center text-xs font-bold text-gray-400 uppercase tracking-widest py-2">
+                                             {day}
+                                         </div>
+                                     ))}
+                                     
+                                     {/* Empty cells for days before month starts */}
+                                     {Array.from({ length: getFirstDayOfMonth(calendarDate.getFullYear(), calendarDate.getMonth()) }).map((_, i) => (
+                                         <div key={`empty-${i}`} className="aspect-square" />
+                                     ))}
+                                     
+                                     {/* Day cells */}
+                                     {Array.from({ length: getDaysInMonth(calendarDate.getFullYear(), calendarDate.getMonth()) }).map((_, i) => {
+                                         const day = i + 1;
+                                         const date = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), day);
+                                         const dateStr = getDateString(date);
+                                         const mastered = masteredByDate[dateStr] || 0;
+                                         const attempts = attemptsByDate[dateStr] || 0;
+                                         const isToday = dateStr === getDateString(new Date());
+                                         const isFuture = date > new Date();
+                                         
+                                         return (
+                                             <div 
+                                                 key={day}
+                                                 className={`aspect-square rounded-xl flex flex-col items-center justify-center relative transition-all ${
+                                                     isToday ? 'ring-2 ring-gold ring-offset-2' : ''
+                                                 } ${
+                                                     mastered >= 15 ? 'bg-gold text-white' :
+                                                     mastered >= 10 ? 'bg-gold/60 text-white' :
+                                                     mastered >= 5 ? 'bg-gold/30 text-charcoal' :
+                                                     mastered > 0 ? 'bg-gold/10 text-charcoal' :
+                                                     isFuture ? 'bg-gray-50 text-gray-300' :
+                                                     'bg-gray-50 text-gray-500'
+                                                 }`}
+                                                 title={`${mastered} mastered / ${attempts} attempts`}
+                                             >
+                                                 <span className={`text-sm font-bold ${mastered >= 10 ? 'text-white' : ''}`}>{day}</span>
+                                                 {mastered > 0 && (
+                                                     <span className={`text-[9px] font-bold ${mastered >= 10 ? 'text-white/80' : 'text-gold'}`}>
+                                                         {mastered >= 15 ? '🔥' : mastered}
+                                                     </span>
+                                                 )}
+                                             </div>
+                                         );
+                                     })}
+                                 </div>
+                                 
+                                 {/* Legend */}
+                                 <div className="flex items-center justify-center gap-4 mt-6 pt-4 border-t border-gray-100">
+                                     <div className="flex items-center gap-2">
+                                         <div className="w-4 h-4 rounded bg-gray-50"></div>
+                                         <span className="text-xs text-gray-500">0</span>
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                         <div className="w-4 h-4 rounded bg-gold/10"></div>
+                                         <span className="text-xs text-gray-500">1-4</span>
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                         <div className="w-4 h-4 rounded bg-gold/30"></div>
+                                         <span className="text-xs text-gray-500">5-9</span>
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                         <div className="w-4 h-4 rounded bg-gold/60"></div>
+                                         <span className="text-xs text-gray-500">10-14</span>
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                         <div className="w-4 h-4 rounded bg-gold"></div>
+                                         <span className="text-xs text-gray-500">15+</span>
+                                     </div>
+                                 </div>
+                             </div>
+
+                             {/* Recent Daily History */}
+                             <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#EBE8E0]">
+                                 <h3 className="text-lg font-bold text-charcoal mb-4">Recent Activity</h3>
+                                 <div className="space-y-2">
+                                     {Array.from({ length: 14 }).map((_, i) => {
+                                         const date = new Date();
+                                         date.setDate(date.getDate() - i);
+                                         const dateStr = getDateString(date);
+                                         const mastered = masteredByDate[dateStr] || 0;
+                                         const attempts = attemptsByDate[dateStr] || 0;
+                                         const isToday = i === 0;
+                                         
+                                         return (
+                                             <div 
+                                                 key={dateStr}
+                                                 className={`flex items-center justify-between p-3 rounded-xl transition-colors ${
+                                                     isToday ? 'bg-gold/10 border border-gold/20' : 'hover:bg-gray-50'
+                                                 }`}
+                                             >
+                                                 <div className="flex items-center gap-3">
+                                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
+                                                         mastered >= 15 ? 'bg-gold text-white' :
+                                                         mastered > 0 ? 'bg-gold/20 text-gold' :
+                                                         'bg-gray-100 text-gray-400'
+                                                     }`}>
+                                                         {mastered >= 15 ? <Star size={16} fill="currentColor" /> : mastered}
+                                                     </div>
+                                                     <div>
+                                                         <div className={`font-medium ${isToday ? 'text-gold' : 'text-charcoal'}`}>
+                                                             {isToday ? 'Today' : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                                         </div>
+                                                         <div className="text-xs text-gray-500">
+                                                             {attempts > 0 ? `${attempts} attempts` : 'No activity'}
+                                                         </div>
+                                                     </div>
+                                                 </div>
+                                                 <div className="text-right">
+                                                     <div className={`font-bold ${mastered > 0 ? 'text-gold' : 'text-gray-300'}`}>
+                                                         {mastered} mastered
+                                                     </div>
+                                                     {mastered >= 15 && (
+                                                         <div className="text-xs text-gold">🔥 Goal reached!</div>
+                                                     )}
+                                                 </div>
+                                             </div>
+                                         );
+                                     })}
+                                 </div>
+                             </div>
+                         </div>
                      )}
 
                      {/* --- SNIPPETS TAB --- */}

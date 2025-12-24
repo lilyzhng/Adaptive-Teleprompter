@@ -148,6 +148,7 @@ export interface PerformanceReport {
   teachingReportData?: TeachingReport;
   teachingSession?: TeachingSession;  // The full dialog between teacher and junior
   juniorSummary?: string;
+  teachingProblem?: BlindProblem; // The problem data for model answer display in teach reports
   // Readiness (Explain mode Phase 1) specific fields
   readinessReportData?: ReadinessReport;
   readinessProblem?: BlindProblem; // The problem data for model answer display

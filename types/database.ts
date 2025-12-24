@@ -153,6 +153,76 @@ export interface Database {
           report_date?: string
         }
       }
+      user_study_settings: {
+        Row: {
+          user_id: string
+          target_days: number
+          daily_cap: number
+          easy_bonus: number
+          start_date: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          target_days?: number
+          daily_cap?: number
+          easy_bonus?: number
+          start_date?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          target_days?: number
+          daily_cap?: number
+          easy_bonus?: number
+          start_date?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      user_problem_progress: {
+        Row: {
+          id: string
+          user_id: string
+          problem_title: string
+          status: 'new' | 'learning' | 'mastered'
+          best_score: number | null
+          reviews_needed: number
+          reviews_completed: number
+          last_reviewed_at: string | null
+          next_review_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          problem_title: string
+          status?: 'new' | 'learning' | 'mastered'
+          best_score?: number | null
+          reviews_needed?: number
+          reviews_completed?: number
+          last_reviewed_at?: string | null
+          next_review_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          problem_title?: string
+          status?: 'new' | 'learning' | 'mastered'
+          best_score?: number | null
+          reviews_needed?: number
+          reviews_completed?: number
+          last_reviewed_at?: string | null
+          next_review_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -164,5 +234,49 @@ export interface Database {
       [_ in never]: never
     }
   }
+}
+
+// ============================================
+// Spaced Repetition Types (Application Layer)
+// ============================================
+
+export type ProblemStatus = 'new' | 'learning' | 'mastered';
+
+export interface UserStudySettings {
+  userId: string;
+  targetDays: number;
+  dailyCap: number;
+  easyBonus: number;
+  startDate: Date;
+}
+
+export interface UserProblemProgress {
+  id: string;
+  userId: string;
+  problemTitle: string;
+  status: ProblemStatus;
+  bestScore: number | null;
+  reviewsNeeded: number;
+  reviewsCompleted: number;
+  lastReviewedAt: Date | null;
+  nextReviewAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StudyStats {
+  totalProblems: number;
+  newCount: number;
+  learningCount: number;
+  masteredCount: number;
+  dueToday: number;
+  dueTomorrow: number;
+  daysLeft: number;
+  onPace: boolean;
+  todaysQueue: {
+    newProblems: number;
+    reviews: number;
+    total: number;
+  };
 }
 

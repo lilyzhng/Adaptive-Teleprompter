@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { SavedItem, SavedReport, PerformanceReport } from './types';
 import HomeView from './views/HomeView';
@@ -11,6 +11,7 @@ import LoginView from './views/LoginView';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import UserMenu from './components/UserMenu';
 import * as db from './services/databaseService';
+import { migrateFromLocalStorage } from './services/spacedRepetitionService';
 import { titleToSlug, findReportBySlug } from './utils';
 
 // Component to view individual reports by slug
@@ -65,9 +66,12 @@ const MainApp: React.FC = () => {
   const [isLoadingData, setIsLoadingData] = useState(false);
   
   // Track if we've loaded data for the current user to prevent re-fetching
-  const loadedUserIdRef = React.useRef<string | null>(null);
+  const loadedUserIdRef = useRef<string | null>(null);
   
-  // Walkie-Talkie mastery state
+  // Track if we've migrated localStorage data
+  const migratedRef = useRef(false);
+  
+  // Walkie-Talkie mastery state (legacy - kept for backwards compatibility)
   const [masteredIds, setMasteredIds] = useState<string[]>(() => {
       try {
           const stored = localStorage.getItem('micdrop_mastery_ids');
@@ -75,7 +79,7 @@ const MainApp: React.FC = () => {
       } catch { return []; }
   });
 
-  // Persist mastery state
+  // Persist mastery state (legacy - kept for backwards compatibility)
   useEffect(() => {
       localStorage.setItem('micdrop_mastery_ids', JSON.stringify(masteredIds));
   }, [masteredIds]);
@@ -111,6 +115,23 @@ const MainApp: React.FC = () => {
               ]);
               setSavedItems(items);
               setSavedReports(reports);
+              
+              // One-time migration of localStorage mastery to Supabase
+              // This runs once per user when they first log in after the update
+              if (!migratedRef.current && masteredIds.length > 0) {
+                  const migrationKey = `micdrop_migrated_${user.id}`;
+                  const alreadyMigrated = localStorage.getItem(migrationKey);
+                  
+                  if (!alreadyMigrated) {
+                      console.log('[Migration] Migrating localStorage mastery to Supabase...');
+                      const success = await migrateFromLocalStorage(user.id, masteredIds);
+                      if (success) {
+                          localStorage.setItem(migrationKey, 'true');
+                          console.log('[Migration] Successfully migrated to Supabase');
+                      }
+                  }
+                  migratedRef.current = true;
+              }
           } catch (e) {
               console.error("Failed to load user data from database", e);
               // Reset ref so we can retry
@@ -121,7 +142,7 @@ const MainApp: React.FC = () => {
       };
 
       loadUserData();
-  }, [user]);
+  }, [user, masteredIds]);
 
 
   // -- Snippet Logic --
@@ -272,6 +293,7 @@ const saveReport = useCallback(async (title: string, type: 'coach' | 'walkie' | 
             onMastered={markAsMastered}
             isSaved={isSaved}
             onToggleSave={toggleSaveItem}
+            savedReports={savedReports}
           />
         } />
         

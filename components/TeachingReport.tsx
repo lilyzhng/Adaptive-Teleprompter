@@ -1,13 +1,14 @@
 import React, { useRef } from 'react';
-import { Award, CheckCircle2, AlertCircle, XCircle, ArrowRight, Target, Lightbulb, TrendingUp, MessageSquare, GraduationCap, Download, FileText, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Award, CheckCircle2, AlertCircle, XCircle, ArrowRight, Target, Lightbulb, TrendingUp, MessageSquare, GraduationCap, Download, FileText, AlertTriangle, RotateCcw, Code2, Route } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { TeachingReport, TeachingSession } from '../types';
+import { TeachingReport, TeachingSession, BlindProblem } from '../types';
 
 interface TeachingReportComponentProps {
   report: TeachingReport;
   juniorSummary?: string;
   problemTitle: string;
   leetcodeNumber?: number;
+  problem?: BlindProblem; // For displaying solution, complexity, example
   onContinue: () => void;
   onTryAgain?: () => void; // Optional: retry teaching the same problem
   isLastProblem: boolean;
@@ -19,12 +20,19 @@ const TeachingReportComponent: React.FC<TeachingReportComponentProps> = ({
   juniorSummary,
   problemTitle,
   leetcodeNumber,
+  problem,
   onContinue,
   onTryAgain,
   isLastProblem,
   teachingSession
 }) => {
   const reportRef = useRef<HTMLDivElement>(null);
+
+  // Format text with escaped newlines/tabs (from AI-generated or stored content)
+  const formatText = (text: string) => {
+    if (!text) return '';
+    return text.replace(/\\n/g, '\n').replace(/\\t/g, '    ').trim();
+  };
 
   const downloadReportAsImage = async () => {
     if (!reportRef.current) return;
@@ -497,6 +505,72 @@ const TeachingReportComponent: React.FC<TeachingReportComponentProps> = ({
             <Lightbulb size={20} className="text-green-600 shrink-0 mt-0.5" />
             <p className="text-sm text-green-700 leading-relaxed">{report.concreteImprovement}</p>
           </div>
+        </div>
+      )}
+
+      {/* Model Answer Section (Dark Theme) */}
+      {problem && (
+        <div className="bg-[#1a1a1a] rounded-2xl sm:rounded-3xl border border-[#333] overflow-hidden">
+          <div className="px-6 py-3 border-b border-[#333] bg-[#222]">
+            <h4 className="text-sm font-bold text-gold uppercase tracking-widest flex items-center gap-2">
+              <Lightbulb size={16} /> Model Answer
+            </h4>
+          </div>
+          
+          {/* Key Insight */}
+          <div className="p-6 border-b border-[#333]">
+            <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Key Insight</h5>
+            <p className="text-sm text-gray-200 leading-relaxed">{problem.keyIdea}</p>
+            {problem.steps && problem.steps.length > 0 && (
+              <ol className="text-xs text-gray-400 mt-3 space-y-1 list-decimal list-inside">
+                {problem.steps.map((step, idx) => (
+                  <li key={idx}>{step}</li>
+                ))}
+              </ol>
+            )}
+          </div>
+
+          {/* Complexity */}
+          <div className="p-6 border-b border-[#333] bg-[#181818]">
+            <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3">Complexity</h5>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-[#222] rounded-lg p-4 border border-[#333]">
+                <span className="text-[10px] text-gray-500 uppercase tracking-wider">Time</span>
+                <p className="text-xl font-mono font-bold text-white">{problem.timeComplexity}</p>
+              </div>
+              <div className="bg-[#222] rounded-lg p-4 border border-[#333]">
+                <span className="text-[10px] text-gray-500 uppercase tracking-wider">Space</span>
+                <p className="text-xl font-mono font-bold text-white">{problem.spaceComplexity}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Example Walkthrough */}
+          {problem.example && (
+            <div className="p-6 border-b border-[#333]">
+              <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Route size={12} /> Example Walkthrough
+              </h5>
+              <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">
+                {formatText(problem.example)}
+              </div>
+            </div>
+          )}
+
+          {/* Python Solution */}
+          {problem.skeleton && (
+            <div>
+              <div className="px-6 py-2 border-b border-[#333] flex items-center gap-2 bg-[#1a1a1a]">
+                <Code2 size={14} className="text-gold" />
+                <span className="text-xs font-bold text-gold uppercase tracking-wider">Python Solution</span>
+              </div>
+              <pre className="p-6 overflow-x-auto text-sm leading-relaxed bg-[#0d0d0d]">
+                <code className="text-gray-300 font-mono whitespace-pre">
+                  {formatText(problem.skeleton)}
+                </code>
+              </pre>
+            </div>
+          )}
         </div>
       )}
       </div>

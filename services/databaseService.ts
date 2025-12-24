@@ -431,3 +431,266 @@ export const buildProblemQueue = async (
     return finalQueue;
 };
 
+// ========== SPACED REPETITION: USER STUDY SETTINGS ==========
+
+import { UserStudySettings, UserProblemProgress, ProblemStatus } from '../types/database';
+
+/**
+ * Fetch user study settings
+ */
+export const fetchUserStudySettings = async (userId: string): Promise<UserStudySettings | null> => {
+    const { data, error } = await supabase
+        .from('user_study_settings')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+    if (error) {
+        if (error.code === 'PGRST116') {
+            // No settings found - return null
+            return null;
+        }
+        console.error('Error fetching user study settings:', error);
+        return null;
+    }
+
+    return {
+        userId: data.user_id,
+        targetDays: data.target_days,
+        dailyCap: data.daily_cap,
+        easyBonus: data.easy_bonus,
+        startDate: new Date(data.start_date)
+    };
+};
+
+/**
+ * Create or update user study settings
+ */
+export const upsertUserStudySettings = async (
+    userId: string,
+    settings: Partial<Omit<UserStudySettings, 'userId'>>
+): Promise<UserStudySettings | null> => {
+    const { data, error } = await supabase
+        .from('user_study_settings')
+        .upsert({
+            user_id: userId,
+            target_days: settings.targetDays,
+            daily_cap: settings.dailyCap,
+            easy_bonus: settings.easyBonus,
+            start_date: settings.startDate?.toISOString()
+        }, { onConflict: 'user_id' })
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Error upserting user study settings:', error);
+        return null;
+    }
+
+    return {
+        userId: data.user_id,
+        targetDays: data.target_days,
+        dailyCap: data.daily_cap,
+        easyBonus: data.easy_bonus,
+        startDate: new Date(data.start_date)
+    };
+};
+
+// ========== SPACED REPETITION: USER PROBLEM PROGRESS ==========
+
+/**
+ * Helper to map database row to UserProblemProgress type
+ */
+const mapDbProgressToProgress = (row: any): UserProblemProgress => ({
+    id: row.id,
+    userId: row.user_id,
+    problemTitle: row.problem_title,
+    status: row.status as ProblemStatus,
+    bestScore: row.best_score,
+    reviewsNeeded: row.reviews_needed,
+    reviewsCompleted: row.reviews_completed,
+    lastReviewedAt: row.last_reviewed_at ? new Date(row.last_reviewed_at) : null,
+    nextReviewAt: row.next_review_at ? new Date(row.next_review_at) : null,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at)
+});
+
+/**
+ * Fetch all problem progress for a user
+ */
+export const fetchAllUserProgress = async (userId: string): Promise<UserProblemProgress[]> => {
+    const { data, error } = await supabase
+        .from('user_problem_progress')
+        .select('*')
+        .eq('user_id', userId)
+        .order('problem_title', { ascending: true });
+
+    if (error) {
+        console.error('Error fetching user problem progress:', error);
+        return [];
+    }
+
+    return data.map(mapDbProgressToProgress);
+};
+
+/**
+ * Fetch progress for a single problem
+ */
+export const fetchUserProgressByTitle = async (
+    userId: string,
+    problemTitle: string
+): Promise<UserProblemProgress | null> => {
+    const { data, error } = await supabase
+        .from('user_problem_progress')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('problem_title', problemTitle)
+        .single();
+
+    if (error) {
+        if (error.code === 'PGRST116') {
+            return null; // Not found
+        }
+        console.error('Error fetching user progress by title:', error);
+        return null;
+    }
+
+    return mapDbProgressToProgress(data);
+};
+
+/**
+ * Fetch problems due for review (next_review_at <= today)
+ */
+export const fetchDueReviews = async (userId: string): Promise<UserProblemProgress[]> => {
+    const today = new Date().toISOString();
+    
+    const { data, error } = await supabase
+        .from('user_problem_progress')
+        .select('*')
+        .eq('user_id', userId)
+        .neq('status', 'mastered')
+        .lte('next_review_at', today)
+        .order('next_review_at', { ascending: true });
+
+    if (error) {
+        console.error('Error fetching due reviews:', error);
+        return [];
+    }
+
+    return data.map(mapDbProgressToProgress);
+};
+
+/**
+ * Fetch problems due tomorrow
+ */
+export const fetchDueTomorrow = async (userId: string): Promise<UserProblemProgress[]> => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(23, 59, 59, 999);
+    
+    const { data, error } = await supabase
+        .from('user_problem_progress')
+        .select('*')
+        .eq('user_id', userId)
+        .neq('status', 'mastered')
+        .gt('next_review_at', today.toISOString())
+        .lte('next_review_at', tomorrow.toISOString())
+        .order('next_review_at', { ascending: true });
+
+    if (error) {
+        console.error('Error fetching due tomorrow:', error);
+        return [];
+    }
+
+    return data.map(mapDbProgressToProgress);
+};
+
+/**
+ * Create or update problem progress
+ */
+export const upsertUserProblemProgress = async (
+    userId: string,
+    problemTitle: string,
+    updates: Partial<Omit<UserProblemProgress, 'id' | 'userId' | 'problemTitle' | 'createdAt' | 'updatedAt'>>
+): Promise<UserProblemProgress | null> => {
+    const { data, error } = await supabase
+        .from('user_problem_progress')
+        .upsert({
+            user_id: userId,
+            problem_title: problemTitle,
+            status: updates.status,
+            best_score: updates.bestScore,
+            reviews_needed: updates.reviewsNeeded,
+            reviews_completed: updates.reviewsCompleted,
+            last_reviewed_at: updates.lastReviewedAt?.toISOString(),
+            next_review_at: updates.nextReviewAt?.toISOString()
+        }, { onConflict: 'user_id,problem_title' })
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Error upserting user problem progress:', error);
+        return null;
+    }
+
+    return mapDbProgressToProgress(data);
+};
+
+/**
+ * Batch upsert problem progress (for migration)
+ */
+export const batchUpsertUserProgress = async (
+    userId: string,
+    progressItems: Array<{
+        problemTitle: string;
+        status: ProblemStatus;
+        bestScore?: number;
+        reviewsNeeded?: number;
+        reviewsCompleted?: number;
+        nextReviewAt?: Date;
+    }>
+): Promise<boolean> => {
+    const records = progressItems.map(item => ({
+        user_id: userId,
+        problem_title: item.problemTitle,
+        status: item.status,
+        best_score: item.bestScore || null,
+        reviews_needed: item.reviewsNeeded || 2,
+        reviews_completed: item.reviewsCompleted || 0,
+        next_review_at: item.nextReviewAt?.toISOString() || null,
+        last_reviewed_at: item.status !== 'new' ? new Date().toISOString() : null
+    }));
+
+    const { error } = await supabase
+        .from('user_problem_progress')
+        .upsert(records, { onConflict: 'user_id,problem_title' });
+
+    if (error) {
+        console.error('Error batch upserting user progress:', error);
+        return false;
+    }
+
+    return true;
+};
+
+/**
+ * Get progress statistics for a user
+ */
+export const getProgressStats = async (userId: string): Promise<{
+    newCount: number;
+    learningCount: number;
+    masteredCount: number;
+    dueToday: number;
+}> => {
+    const allProgress = await fetchAllUserProgress(userId);
+    const dueReviews = await fetchDueReviews(userId);
+
+    return {
+        newCount: allProgress.filter(p => p.status === 'new').length,
+        learningCount: allProgress.filter(p => p.status === 'learning').length,
+        masteredCount: allProgress.filter(p => p.status === 'mastered').length,
+        dueToday: dueReviews.length
+    };
+};
+

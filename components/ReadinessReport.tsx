@@ -162,10 +162,10 @@ ${refinedTranscript || '(not available)'}
     
     const totalPoints = analysisItems.reduce((sum, item) => sum + item.points, 0);
 
-    // Format Python code
-    const formatCode = (code: string) => {
-        if (!code) return '';
-        return code.replace(/\\n/g, '\n').replace(/\\t/g, '    ').trim();
+    // Format text with escaped newlines/tabs (from AI-generated content)
+    const formatText = (text: string) => {
+        if (!text) return '';
+        return text.replace(/\\n/g, '\n').replace(/\\t/g, '    ').trim();
     };
 
     return (
@@ -303,7 +303,7 @@ ${refinedTranscript || '(not available)'}
                             <div className="p-4">
                                 <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3">Example Walkthrough</h5>
                                 <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">
-                                    {checklist.exampleWalkthrough.modelExample}
+                                    {formatText(checklist.exampleWalkthrough.modelExample)}
                                 </div>
                             </div>
                         )}
@@ -323,7 +323,7 @@ ${refinedTranscript || '(not available)'}
                         </div>
                         <pre className="p-4 overflow-x-auto text-sm leading-relaxed">
                             <code className="text-gray-300 font-mono whitespace-pre">
-                                {formatCode(problem.skeleton)}
+                                {formatText(problem.skeleton)}
                             </code>
                         </pre>
                     </div>

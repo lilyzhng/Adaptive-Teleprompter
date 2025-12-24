@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Home, ArrowLeft, Mic, StopCircle, ChevronRight, CheckCircle2, Award, Sparkles, Code2, Loader2, BrainCircuit, X, ShieldAlert, BookOpen, Coffee, Trees, Train, Trophy, Star, AlertCircle, Flame, Target, Repeat, Zap, Leaf, GraduationCap, MessageCircle, Volume2, VolumeX, Send, Layers, ExternalLink } from 'lucide-react';
-import { BlindProblem, PerformanceReport, SavedItem, TeachingSession, TeachingTurn, JuniorState, TeachingReport, ReadinessReport } from '../types';
+import { Home, ArrowLeft, Mic, StopCircle, ChevronRight, CheckCircle2, Award, Sparkles, Code2, Loader2, BrainCircuit, X, ShieldAlert, BookOpen, Coffee, Trees, Train, Trophy, Star, AlertCircle, Flame, Target, Repeat, Zap, Leaf, GraduationCap, MessageCircle, Volume2, VolumeX, Send, Layers, ExternalLink, Settings, Calendar } from 'lucide-react';
+import { BlindProblem, PerformanceReport, SavedItem, SavedReport, TeachingSession, TeachingTurn, JuniorState, TeachingReport, ReadinessReport } from '../types';
+import { UserStudySettings, StudyStats } from '../types/database';
 import { analyzeWalkieSession, refineTranscript } from '../services/analysisService';
-import { buildProblemQueue, fetchBlindProblemByTitle } from '../services/databaseService';
+import { buildProblemQueue, fetchBlindProblemByTitle, fetchUserProgressByTitle } from '../services/databaseService';
 import { 
   getInitialJuniorState, 
   getJuniorResponse, 
@@ -18,6 +19,16 @@ import {
   setJuniorSummary,
   evaluateReadinessToTeach
 } from '../services/teachBackService';
+import {
+  getSettingsWithDefaults,
+  updateSettings,
+  buildSpacedRepetitionQueue,
+  updateProgressAfterAttempt,
+  getProgressGrid,
+  GroupedProblems,
+  DEFAULT_SETTINGS
+} from '../services/spacedRepetitionService';
+import { useAuth } from '../contexts/AuthContext';
 import PerformanceReportComponent from '../components/PerformanceReport';
 import TeachingReportComponent from '../components/TeachingReport';
 import ReadinessReportComponent from '../components/ReadinessReport';
@@ -152,37 +163,112 @@ interface WalkieTalkieViewProps {
   onMastered: (id: string) => void;
   isSaved: (title: string, content: string) => boolean;
   onToggleSave: (item: Omit<SavedItem, 'id' | 'date'>) => void;
+  savedReports: SavedReport[];
 }
 
-// 3 REAL WORLD LOCATIONS - Just fun location names (no topic association)
+// Helper to get date string in YYYY-MM-DD format
+const getDateString = (date: Date | string): string => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toISOString().split('T')[0];
+};
+
+// Helper to count questions solved per day from saved reports
+const countQuestionsByDate = (reports: SavedReport[]): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  
+  // Only count walkie and teach reports that were "mastered"
+  // Walkie: detectedAutoScore === 'good'
+  // Teach: studentOutcome === 'can_implement' AND teachingScore >= 75
+  const relevantReports = reports.filter(r => {
+    if (r.type === 'walkie') {
+      return r.reportData?.detectedAutoScore === 'good';
+    }
+    if (r.type === 'teach') {
+      const teachingData = r.reportData?.teachingReportData;
+      return teachingData?.studentOutcome === 'can_implement' && (teachingData?.teachingScore ?? 0) >= 75;
+    }
+    return false;
+  });
+  
+  for (const report of relevantReports) {
+    const dateStr = getDateString(report.date);
+    counts[dateStr] = (counts[dateStr] || 0) + 1;
+  }
+  
+  return counts;
+};
+
+// Get last N days of stats
+interface DailyStats {
+  date: string;
+  displayDate: string;
+  count: number;
+  isToday: boolean;
+}
+
+const getDailyStats = (reports: SavedReport[], days: number = 7): DailyStats[] => {
+  const counts = countQuestionsByDate(reports);
+  const today = new Date();
+  const stats: DailyStats[] = [];
+  
+  for (let i = 0; i < days; i++) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - i);
+    const dateStr = getDateString(date);
+    const isToday = i === 0;
+    
+    stats.push({
+      date: dateStr,
+      displayDate: isToday ? 'Today' : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+      count: counts[dateStr] || 0,
+      isToday
+    });
+  }
+  
+  return stats;
+};
+
+// 3 REAL WORLD LOCATIONS - Each will be assigned a random topic
 const POWER_SPOTS = [
   { 
     id: 'spot1', 
     name: 'The Coffee Sanctuary', 
-    ritual: 'Deep Focus Batch', 
-    batchSize: 5, 
+    ritual: 'Deep Focus', 
     icon: 'coffee', 
-    description: 'A warm brew and 5 curated challenges await.'
+    description: 'A warm brew and focused topic practice.'
   },
   { 
     id: 'spot2', 
     name: 'The Logic Trail', 
-    ritual: 'Movement Batch', 
-    batchSize: 5, 
+    ritual: 'Movement', 
     icon: 'park', 
     description: 'Walk and talk through patterns in nature.'
   },
   { 
     id: 'spot3', 
     name: 'The Daily Commute', 
-    ritual: 'Transit Batch', 
-    batchSize: 5, 
+    ritual: 'Transit', 
     icon: 'train', 
     description: 'Quick-fire problem solving on the move.'
   }
 ];
 
-const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveReport, masteredIds, onMastered, isSaved, onToggleSave }) => {
+// Type for spot with assigned topic
+interface SpotWithTopic {
+  id: string;
+  name: string;
+  ritual: string;
+  icon: string;
+  description: string;
+  topic: string;  // The problem_group name
+  topicDisplay: string;  // Formatted display name
+  remaining: number;  // Problems not mastered in this topic
+}
+
+const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveReport, masteredIds, onMastered, isSaved, onToggleSave, savedReports }) => {
+  // Get auth context for user ID
+  const { user } = useAuth();
+  
   // Get navigation state for "Teach Again" functionality
   const location = useLocation();
   const teachAgainProblem = (location.state as { teachAgainProblem?: string } | null)?.teachAgainProblem;
@@ -199,6 +285,93 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   const [selectedSpot, setSelectedSpot] = useState<typeof POWER_SPOTS[0] | null>(null);
   const [showStats, setShowStats] = useState(false);
   
+  // Spaced Repetition Settings State
+  const [showSettings, setShowSettings] = useState(false);
+  const [studySettings, setStudySettings] = useState<UserStudySettings | null>(null);
+  const [studyStats, setStudyStats] = useState<StudyStats | null>(null);
+  const [settingsForm, setSettingsForm] = useState({
+    targetDays: DEFAULT_SETTINGS.targetDays,
+    dailyCap: DEFAULT_SETTINGS.dailyCap
+  });
+  const [useSpacedRepetition, setUseSpacedRepetition] = useState(true);
+  
+  // Spot topic assignments - each spot gets a random topic
+  const [spotsWithTopics, setSpotsWithTopics] = useState<SpotWithTopic[]>([]);
+  const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
+  const [isLoadingSpots, setIsLoadingSpots] = useState(true);
+  
+  // Load settings and assign topics to spots on mount
+  useEffect(() => {
+    if (!user?.id) return;
+    
+    const loadSettingsAndTopics = async () => {
+      setIsLoadingSpots(true);
+      try {
+        // Load settings
+        const settings = await getSettingsWithDefaults(user.id);
+        setStudySettings(settings);
+        setSettingsForm({
+          targetDays: settings.targetDays,
+          dailyCap: settings.dailyCap
+        });
+        
+        // Load progress grid to get topics with remaining problems
+        const progressGrid = await getProgressGrid(user.id);
+        
+        // Filter topics that have remaining problems (not all mastered)
+        const topicsWithRemaining = progressGrid.filter(g => g.masteredCount < g.totalCount);
+        
+        // Shuffle topics and assign to spots
+        const shuffledTopics = [...topicsWithRemaining].sort(() => Math.random() - 0.5);
+        
+        const assignedSpots: SpotWithTopic[] = POWER_SPOTS.map((spot, idx) => {
+          // Cycle through topics if we have fewer topics than spots
+          const topicGroup = shuffledTopics[idx % shuffledTopics.length];
+          
+          if (topicGroup) {
+            return {
+              ...spot,
+              topic: topicGroup.groupName,
+              topicDisplay: topicGroup.groupName,
+              remaining: topicGroup.totalCount - topicGroup.masteredCount
+            };
+          } else {
+            // No topics with remaining problems - all mastered!
+            return {
+              ...spot,
+              topic: 'all_mastered',
+              topicDisplay: 'All Mastered!',
+              remaining: 0
+            };
+          }
+        });
+        
+        setSpotsWithTopics(assignedSpots);
+      } catch (error) {
+        console.error('Error loading spots with topics:', error);
+      } finally {
+        setIsLoadingSpots(false);
+      }
+    };
+    
+    loadSettingsAndTopics();
+  }, [user?.id]);
+  
+  // Save settings handler
+  const handleSaveSettings = async () => {
+    if (!user?.id) return;
+    
+    const updated = await updateSettings(user.id, {
+      targetDays: settingsForm.targetDays,
+      dailyCap: settingsForm.dailyCap
+    });
+    
+    if (updated) {
+      setStudySettings(updated);
+    }
+    setShowSettings(false);
+  };
+  
   // Session Mode State - Paired (Explain → Teach) is the default for best learning
   const [sessionMode, setSessionMode] = useState<SessionMode>('paired');
   
@@ -210,11 +383,22 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   const [currentQueueIdx, setCurrentQueueIdx] = useState(0);
   const [sessionScore, setSessionScore] = useState(0); // How many cleared in THIS visit
 
-  // Daily & Lifetime Stats (Simulated persistence)
-  const [dailyCleared, setDailyCleared] = useState(0);
-  const [totalConquered, setTotalConquered] = useState(() => {
-    return Number(localStorage.getItem('micdrop_total_conquered') || 0);
-  });
+  // Daily & Lifetime Stats - computed from saved reports
+  const dailyStats = useMemo(() => getDailyStats(savedReports, 7), [savedReports]);
+  const dailyCleared = useMemo(() => {
+    const todayStr = getDateString(new Date());
+    const counts = countQuestionsByDate(savedReports);
+    return counts[todayStr] || 0;
+  }, [savedReports]);
+  
+  // Session-local counter for immediate feedback (before reports are saved)
+  const [sessionCleared, setSessionCleared] = useState(0);
+  
+  const totalConquered = useMemo(() => {
+    // Count all mastered questions from saved reports (uses same logic as countQuestionsByDate)
+    const counts = countQuestionsByDate(savedReports);
+    return Object.values(counts).reduce((sum, count) => sum + count, 0);
+  }, [savedReports]);
 
   // Analysis State (Explain mode)
   const [transcript, setTranscript] = useState("");
@@ -472,15 +656,22 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
               // Auto-Save and Auto-Update Stats
               onSaveReport(currentProblem.title, 'walkie', report);
               
+              // Update spaced repetition progress
+              if (useSpacedRepetition && user?.id) {
+                  const existingProgress = await fetchUserProgressByTitle(user.id, currentProblem.title);
+                  await updateProgressAfterAttempt(
+                      user.id,
+                      currentProblem.title,
+                      report.rating,
+                      currentProblem.difficulty,
+                      existingProgress
+                  );
+              }
+              
               if (score === 'good') {
                   onMastered(currentProblem.title);
                   setSessionScore(prev => prev + 1);
-                  setDailyCleared(prev => prev + 1);
-                  setTotalConquered(prev => {
-                      const newVal = prev + 1;
-                      localStorage.setItem('micdrop_total_conquered', String(newVal));
-                      return newVal;
-                  });
+                  setSessionCleared(prev => prev + 1);
               }
 
               setStep('reveal');
@@ -518,29 +709,55 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     }
   };
 
-  const startSpotSession = async (spot: typeof POWER_SPOTS[0]) => {
+  const startSpotSession = async (spot: SpotWithTopic) => {
+    // Set the selected topic for this session
+    setSelectedTopic(spot.topic);
     setSelectedSpot(spot);
     setStep('curating');
     
     try {
-        // Build problem queue using focus groups and progressive difficulty
-        const allowedDifficulties = DIFFICULTY_MAP[difficultyMode];
-        const problems = await buildProblemQueue(masteredIds, allowedDifficulties, spot.batchSize);
+        let problems: BlindProblem[] = [];
+        
+        // Calculate remaining problems for today's goal
+        const dailyGoal = studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap;
+        const completedToday = dailyCleared + sessionCleared;
+        const remainingToday = Math.max(0, dailyGoal - completedToday);
+        
+        // Cap batch size at remaining daily goal or a reasonable max
+        const batchSize = Math.min(remainingToday, 10);
+        
+        if (batchSize === 0) {
+            console.log('[Session] Daily goal already reached!');
+            setStep('locations');
+            return;
+        }
+        
+        // Use spaced repetition queue if enabled and user is logged in
+        if (useSpacedRepetition && user?.id) {
+            const { queue, stats } = await buildSpacedRepetitionQueue(user.id, spot.topic);
+            problems = queue.slice(0, batchSize);
+            setStudyStats(stats);
+            console.log(`[Spaced Repetition] Topic: ${spot.topic}, Queue:`, problems.map(p => p.title));
+        } else {
+            // Fallback to original queue building (no topic filter)
+            const allowedDifficulties = DIFFICULTY_MAP[difficultyMode];
+            problems = await buildProblemQueue(masteredIds, allowedDifficulties, batchSize);
+        }
         
         if (problems.length === 0) {
-            console.warn("No problems found for difficulty mode:", difficultyMode);
-            // Fallback: try fetching without excluding mastered IDs
-            const fallbackProblems = await buildProblemQueue([], allowedDifficulties, spot.batchSize);
+            console.warn("No problems found for queue in topic:", spot.topic);
+            // Fallback: try fetching without topic filter
+            const allowedDifficulties = DIFFICULTY_MAP[difficultyMode];
+            const fallbackProblems = await buildProblemQueue([], allowedDifficulties, batchSize);
             if (fallbackProblems.length === 0) {
                 console.error("No problems available in database");
                 setStep('locations');
                 return;
             }
-            setProblemQueue(fallbackProblems);
-        } else {
-            setProblemQueue(problems);
+            problems = fallbackProblems;
         }
         
+        setProblemQueue(problems);
         setCurrentQueueIdx(0);
         setSessionScore(0);
         
@@ -679,21 +896,29 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           })),
           teachingReportData: report,
           teachingSession: updatedSession,  // Include the full dialog
-          juniorSummary: finalSession.juniorSummary
+          juniorSummary: finalSession.juniorSummary,
+          teachingProblem: currentProblem  // Include problem for model answer display
         };
         onSaveReport(currentProblem.title, 'teach', performanceReport);
+        
+        // Update spaced repetition progress (use teaching score as rating)
+        if (useSpacedRepetition && user?.id) {
+          const existingProgress = await fetchUserProgressByTitle(user.id, currentProblem.title);
+          await updateProgressAfterAttempt(
+            user.id,
+            currentProblem.title,
+            report.teachingScore,
+            currentProblem.difficulty,
+            existingProgress
+          );
+        }
         
         // Mark as mastered if student can implement AND teaching score >= 75
         // This ensures both good outcome AND quality teaching
         if (report.studentOutcome === 'can_implement' && report.teachingScore >= 75) {
           onMastered(currentProblem.title);
           setSessionScore(prev => prev + 1);
-          setDailyCleared(prev => prev + 1);
-          setTotalConquered(prev => {
-            const newVal = prev + 1;
-            localStorage.setItem('micdrop_total_conquered', String(newVal));
-            return newVal;
-          });
+          setSessionCleared(prev => prev + 1);
         }
         
         setStep('teaching_reveal');
@@ -746,21 +971,29 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         })),
         teachingReportData: report,
         teachingSession: finalSession,  // Include the full dialog
-        juniorSummary: finalSession.juniorSummary
+        juniorSummary: finalSession.juniorSummary,
+        teachingProblem: currentProblem  // Include problem for model answer display
       };
       onSaveReport(currentProblem.title, 'teach', performanceReport);
+      
+      // Update spaced repetition progress (use teaching score as rating)
+      if (useSpacedRepetition && user?.id) {
+        const existingProgress = await fetchUserProgressByTitle(user.id, currentProblem.title);
+        await updateProgressAfterAttempt(
+          user.id,
+          currentProblem.title,
+          report.teachingScore,
+          currentProblem.difficulty,
+          existingProgress
+        );
+      }
       
       // Mark as mastered if student can implement AND teaching score >= 75
       // This ensures both good outcome AND quality teaching
       if (report.studentOutcome === 'can_implement' && report.teachingScore >= 75) {
         onMastered(currentProblem.title);
         setSessionScore(prev => prev + 1);
-        setDailyCleared(prev => prev + 1);
-        setTotalConquered(prev => {
-          const newVal = prev + 1;
-          localStorage.setItem('micdrop_total_conquered', String(newVal));
-          return newVal;
-        });
+        setSessionCleared(prev => prev + 1);
       }
       
       setStep('teaching_reveal');
@@ -835,9 +1068,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
             <div className="text-[8px] sm:text-[10px] text-gold font-bold tracking-[0.2em] sm:tracking-[0.3em] uppercase mb-1">Daily Quest</div>
             <div className="flex items-center justify-center gap-2 sm:gap-3">
                 <div className="h-1 sm:h-1.5 w-20 sm:w-32 bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-gold transition-all duration-700" style={{ width: `${(dailyCleared / 15) * 100}%` }}></div>
+                    <div className="h-full bg-gold transition-all duration-700" style={{ width: `${((dailyCleared + sessionCleared) / (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap)) * 100}%` }}></div>
                 </div>
-                <span className="text-xs sm:text-sm font-bold font-mono text-gold">{dailyCleared}/15</span>
+                <span className="text-xs sm:text-sm font-bold font-mono text-gold">{dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap}</span>
             </div>
           </div>
 
@@ -865,6 +1098,14 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
             ) : (
               <><Mic size={12} className="sm:w-3.5 sm:h-3.5" /><span>Explain</span></>
             )}
+          </button>
+
+          <button 
+            onClick={() => setShowSettings(true)}
+            className="w-9 h-9 sm:w-12 sm:h-12 rounded-full flex items-center justify-center bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 hover:text-white transition-all shrink-0"
+            title="Study Settings"
+          >
+            <Settings size={16} className="sm:w-5 sm:h-5" />
           </button>
 
           <button 
@@ -932,33 +1173,63 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
             {difficultyMode === 'challenge' && 'All difficulties — test your limits'}
           </p>
 
-          {POWER_SPOTS.map((spot) => (
-            <button 
-              key={spot.id} 
-              onClick={() => startSpotSession(spot)}
-              className="w-full bg-white/5 rounded-2xl sm:rounded-[2.5rem] border-2 border-white/5 p-4 sm:p-6 md:p-8 flex items-center gap-4 sm:gap-6 md:gap-8 text-left hover:border-gold/40 hover:bg-gold/5 transition-all group"
-            >
-              <div className="w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-2xl sm:rounded-3xl bg-charcoal border border-white/10 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-gold group-hover:text-charcoal transition-all shrink-0">
-                  {getSpotIcon(spot.icon)}
-              </div>
-              <div className="flex-1 min-w-0">
-                  <div className="text-[8px] sm:text-[10px] font-bold text-gold uppercase tracking-widest mb-0.5 sm:mb-1">{spot.ritual}</div>
-                  <h3 className="text-lg sm:text-xl md:text-2xl font-serif font-bold mb-0.5 sm:mb-1 truncate">{spot.name}</h3>
-                  <p className="text-[10px] sm:text-xs text-gray-500 leading-relaxed line-clamp-2">{spot.description}</p>
-              </div>
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white/5 flex items-center justify-center text-gray-500 group-hover:text-gold shrink-0">
-                  <ChevronRight size={16} className="sm:w-5 sm:h-5" />
-              </div>
-            </button>
-          ))}
+          {isLoadingSpots ? (
+            <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+              <Loader2 size={32} className="animate-spin mb-4" />
+              <p className="text-sm">Loading topics...</p>
+            </div>
+          ) : spotsWithTopics.length === 0 ? (
+            <div className="bg-gold/10 border border-gold/40 rounded-2xl p-8 text-center">
+              <Trophy size={40} className="mx-auto mb-4 text-gold" />
+              <h3 className="text-xl font-serif font-bold text-gold mb-2">All Topics Mastered!</h3>
+              <p className="text-gold/60 text-sm">You've conquered all 75 problems. Legendary.</p>
+            </div>
+          ) : (
+            spotsWithTopics.map((spot) => (
+              <button 
+                key={spot.id} 
+                onClick={() => spot.remaining > 0 ? startSpotSession(spot) : null}
+                disabled={spot.remaining === 0}
+                className={`w-full bg-white/5 rounded-2xl sm:rounded-[2.5rem] border-2 border-white/5 p-4 sm:p-6 md:p-8 flex items-center gap-4 sm:gap-6 md:gap-8 text-left transition-all group ${
+                  spot.remaining === 0 
+                    ? 'opacity-50 cursor-not-allowed' 
+                    : 'hover:border-gold/40 hover:bg-gold/5'
+                }`}
+              >
+                <div className="w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-2xl sm:rounded-3xl bg-charcoal border border-white/10 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-gold group-hover:text-charcoal transition-all shrink-0">
+                    {getSpotIcon(spot.icon)}
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div className="text-[8px] sm:text-[10px] font-bold text-gold uppercase tracking-widest mb-0.5 sm:mb-1">{spot.ritual}</div>
+                    <h3 className="text-lg sm:text-xl md:text-2xl font-serif font-bold mb-1 sm:mb-1.5 truncate">{spot.name}</h3>
+                    
+                    {/* Topic Tag */}
+                    <div className="flex items-center gap-2 mb-1 sm:mb-1.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-300 text-[9px] sm:text-[10px] font-medium">
+                        <Target size={10} className="sm:w-3 sm:h-3" />
+                        {spot.topicDisplay}
+                      </span>
+                      <span className={`text-[9px] sm:text-[10px] font-mono ${spot.remaining === 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                        {spot.remaining === 0 ? '✓ Complete' : `${spot.remaining} remaining`}
+                      </span>
+                    </div>
+                    
+                    <p className="text-[10px] sm:text-xs text-gray-500 leading-relaxed line-clamp-1">{spot.description}</p>
+                </div>
+                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white/5 flex items-center justify-center text-gray-500 group-hover:text-gold shrink-0">
+                    <ChevronRight size={16} className="sm:w-5 sm:h-5" />
+                </div>
+              </button>
+            ))
+          )}
 
-          {dailyCleared >= 15 && (
+          {(dailyCleared + sessionCleared) >= (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap) && (
             <div className="bg-gold/10 border border-gold/40 rounded-2xl sm:rounded-[2.5rem] p-6 sm:p-10 text-center animate-in zoom-in duration-500">
                 <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gold rounded-full flex items-center justify-center text-charcoal mx-auto mb-3 sm:mb-4 shadow-[0_0_30px_rgba(199,169,101,0.4)]">
                     <Star size={24} className="sm:w-8 sm:h-8" fill="currentColor" />
                 </div>
                 <h3 className="text-xl sm:text-2xl font-serif font-bold text-gold mb-1 sm:mb-2">Daily Goal Achieved!</h3>
-                <p className="text-gold/60 text-xs sm:text-sm">You have mastered 15 coding patterns today. Ritual complete.</p>
+                <p className="text-gold/60 text-xs sm:text-sm">You have mastered {studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap} coding patterns today. Ritual complete.</p>
             </div>
           )}
         </div>
@@ -1029,6 +1300,63 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                                 "The master does it until he cannot fail."
                             </div>
                         </div>
+
+                        {/* Daily History - 7 Day Tracker */}
+                        <div className="space-y-3 sm:space-y-4">
+                            <div className="flex items-center gap-2 px-1 sm:px-2">
+                                <Flame size={14} className="text-gold" />
+                                <span className="text-[8px] sm:text-[10px] font-bold text-gray-500 uppercase tracking-wider sm:tracking-widest">7-Day History</span>
+                            </div>
+                            <div className="space-y-2">
+                                {dailyStats.map((day) => (
+                                    <div 
+                                        key={day.date}
+                                        className={`flex items-center justify-between p-3 sm:p-4 rounded-xl ${
+                                            day.isToday 
+                                                ? 'bg-gold/10 border border-gold/30' 
+                                                : 'bg-white/5 border border-white/5'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                                                day.count >= 15 
+                                                    ? 'bg-gold text-charcoal' 
+                                                    : day.count > 0 
+                                                    ? 'bg-gold/20 text-gold' 
+                                                    : 'bg-white/10 text-gray-600'
+                                            }`}>
+                                                {day.count >= 15 ? <Star size={14} fill="currentColor" /> : day.count}
+                                            </div>
+                                            <span className={`text-xs sm:text-sm font-medium ${
+                                                day.isToday ? 'text-gold' : 'text-gray-400'
+                                            }`}>
+                                                {day.displayDate}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {day.count > 0 && (
+                                                <div className="flex">
+                                                    {Array.from({ length: Math.min(day.count, 5) }).map((_, i) => (
+                                                        <div 
+                                                            key={i} 
+                                                            className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-gold -ml-0.5 first:ml-0"
+                                                        />
+                                                    ))}
+                                                    {day.count > 5 && (
+                                                        <span className="text-[8px] sm:text-[9px] text-gold ml-1">+{day.count - 5}</span>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <span className={`text-[10px] sm:text-xs font-mono ${
+                                                day.isToday ? 'text-gold' : 'text-gray-500'
+                                            }`}>
+                                                {day.count} solved
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
 
                     <button 
@@ -1037,6 +1365,116 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                     >
                         Return to Quest
                     </button>
+                </div>
+            </div>
+        )}
+
+        {/* SETTINGS MODAL */}
+        {showSettings && (
+            <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-300">
+                <div className="bg-charcoal border border-white/10 rounded-2xl sm:rounded-[2rem] w-full max-w-md overflow-hidden shadow-2xl relative">
+                    <div className="p-6 sm:p-8 border-b border-white/5">
+                        <button onClick={() => setShowSettings(false)} className="absolute top-4 right-4 sm:top-6 sm:right-6 text-gray-500 hover:text-white transition-colors">
+                            <X size={20} />
+                        </button>
+                        <div className="flex items-center gap-3 mb-2">
+                            <Settings size={20} className="text-gold" />
+                            <h2 className="text-xl sm:text-2xl font-serif font-bold text-white">Study Settings</h2>
+                        </div>
+                        <p className="text-gray-500 text-xs sm:text-sm">Configure your spaced repetition study plan</p>
+                    </div>
+
+                    <div className="p-6 sm:p-8 space-y-6">
+                        {/* Spaced Repetition Toggle */}
+                        <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10">
+                            <div>
+                                <div className="text-sm font-medium text-white mb-1">Spaced Repetition</div>
+                                <div className="text-xs text-gray-500">Use adaptive scheduling for reviews</div>
+                            </div>
+                            <button
+                                onClick={() => setUseSpacedRepetition(!useSpacedRepetition)}
+                                className={`w-12 h-6 rounded-full transition-all ${
+                                    useSpacedRepetition ? 'bg-gold' : 'bg-gray-600'
+                                }`}
+                            >
+                                <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                                    useSpacedRepetition ? 'translate-x-6' : 'translate-x-0.5'
+                                }`} />
+                            </button>
+                        </div>
+
+                        {/* Target Days */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block">
+                                <Calendar size={12} className="inline mr-2" />
+                                Target Days to Complete
+                            </label>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="range"
+                                    min="5"
+                                    max="30"
+                                    value={settingsForm.targetDays}
+                                    onChange={(e) => setSettingsForm(prev => ({ ...prev, targetDays: parseInt(e.target.value) }))}
+                                    className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-gold"
+                                />
+                                <span className="text-xl font-bold text-gold w-12 text-center">{settingsForm.targetDays}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-2">
+                                ~{Math.ceil(75 / settingsForm.targetDays)} new problems per day
+                            </p>
+                        </div>
+
+                        {/* Daily Cap */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block">
+                                <Target size={12} className="inline mr-2" />
+                                Daily Problem Cap
+                            </label>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="range"
+                                    min="5"
+                                    max="25"
+                                    value={settingsForm.dailyCap}
+                                    onChange={(e) => setSettingsForm(prev => ({ ...prev, dailyCap: parseInt(e.target.value) }))}
+                                    className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-gold"
+                                />
+                                <span className="text-xl font-bold text-gold w-12 text-center">{settingsForm.dailyCap}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-2">
+                                Maximum problems (new + reviews) per day
+                            </p>
+                        </div>
+
+                        {/* Current Status */}
+                        {studySettings && (
+                            <div className="p-4 bg-gold/5 rounded-xl border border-gold/20">
+                                <div className="text-xs font-bold text-gold uppercase tracking-widest mb-2">Current Plan</div>
+                                <div className="text-sm text-gray-300">
+                                    Started: {new Date(studySettings.startDate).toLocaleDateString()}
+                                </div>
+                                <div className="text-sm text-gray-300">
+                                    Target: {studySettings.targetDays} days • Cap: {studySettings.dailyCap}/day
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="p-6 sm:p-8 border-t border-white/5 flex gap-3">
+                        <button 
+                            onClick={() => setShowSettings(false)} 
+                            className="flex-1 py-3 bg-white/5 text-gray-400 text-sm font-bold uppercase tracking-widest rounded-xl hover:bg-white/10 transition-all"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={handleSaveSettings} 
+                            className="flex-1 py-3 bg-gold text-charcoal text-sm font-bold uppercase tracking-widest rounded-xl hover:bg-white transition-all"
+                        >
+                            Save
+                        </button>
+                    </div>
                 </div>
             </div>
         )}
@@ -1114,7 +1552,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           </div>
           <div className="flex items-center gap-2">
             <div className="px-3 py-1.5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
-              {currentQueueIdx + 1}/5
+              {dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap} today
             </div>
           </div>
         </div>
@@ -1153,7 +1591,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                 {selectedSpot?.name}
              </div>
              <div className="px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full border border-white/10 text-[8px] sm:text-[10px] font-bold text-gray-400 bg-white/5 uppercase tracking-wider sm:tracking-widest whitespace-nowrap">
-                {currentQueueIdx + 1}/5
+                {dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap} today
              </div>
           </div>
         </div>
@@ -1585,6 +2023,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
               juniorSummary={teachingSession.juniorSummary}
               problemTitle={currentProblem?.title || ''}
               leetcodeNumber={currentProblem?.leetcodeNumber}
+              problem={currentProblem}
               onContinue={handleTeachingContinue}
               onTryAgain={handleTryTeachAgain}
               isLastProblem={currentQueueIdx >= problemQueue.length - 1}
