@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play, Award, Zap, Code2, GraduationCap, Layers, TrendingUp, Flame, Target, ChevronLeft, ChevronRight, Clock, CheckCircle2, Circle, AlertCircle, BarChart3 } from 'lucide-react';
+import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play, Award, Zap, Code2, GraduationCap, Layers, TrendingUp, Target, ChevronLeft, ChevronRight, Clock, AlertCircle, BarChart3 } from 'lucide-react';
 import { SavedItem, SavedReport } from '../types';
 import { StudyStats } from '../types/database';
 import PerformanceReportComponent from '../components/PerformanceReport';
@@ -129,6 +129,66 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
     const [dueToday, setDueToday] = useState<Array<{ problemTitle: string; bestScore: number | null; lastReviewedAt: Date | null }>>([]);
     const [dueTomorrow, setDueTomorrow] = useState<Array<{ problemTitle: string }>>([]);
     const [isLoadingProgress, setIsLoadingProgress] = useState(false);
+    const [dailyCap, setDailyCap] = useState(10);
+    const [targetDays, setTargetDays] = useState(10);
+    const [showTodayDetails, setShowTodayDetails] = useState(false);
+    const [showMasteredDetails, setShowMasteredDetails] = useState(false);
+    
+    // Get all mastered problems from progressGrid
+    const allMasteredProblems = useMemo(() => {
+        const mastered: Array<{ title: string; group: string; difficulty: 'easy' | 'medium' | 'hard'; bestScore: number | null }> = [];
+        progressGrid.forEach(group => {
+            group.problems.forEach(item => {
+                if (item.progress?.status === 'mastered') {
+                    mastered.push({
+                        title: item.problem.title,
+                        group: group.groupName,
+                        difficulty: item.problem.difficulty,
+                        bestScore: item.progress.bestScore
+                    });
+                }
+            });
+        });
+        return mastered;
+    }, [progressGrid]);
+    
+    // Calculate today's reports with details
+    const todayReports = useMemo(() => {
+        const todayStr = getDateString(new Date());
+        return savedReports.filter(r => {
+            if (r.type !== 'walkie' && r.type !== 'teach') return false;
+            const reportDate = getDateString(r.date);
+            return reportDate === todayStr;
+        }).map(r => {
+            let isMastered = false;
+            let score = 0;
+            
+            if (r.type === 'walkie') {
+                isMastered = r.reportData?.detectedAutoScore === 'good';
+                score = r.reportData?.rating ?? 0;
+            } else if (r.type === 'teach') {
+                const teachingData = r.reportData?.teachingReportData;
+                isMastered = teachingData?.studentOutcome === 'can_implement' && 
+                            (teachingData?.teachingScore ?? 0) >= 75;
+                score = teachingData?.teachingScore ?? 0;
+            }
+            
+            return {
+                title: r.title,
+                type: r.type,
+                isMastered,
+                score,
+                date: r.date
+            };
+        });
+    }, [savedReports]);
+    
+    // Split into mastered and attempted (not mastered)
+    const todayMastered = useMemo(() => 
+        todayReports.filter(r => r.isMastered), [todayReports]);
+    const todayAttempted = useMemo(() => 
+        todayReports.filter(r => !r.isMastered), [todayReports]);
+    const todayCompleted = todayMastered.length;
     
     // Load spaced repetition data when Progress tab is active
     useEffect(() => {
@@ -162,6 +222,8 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                 const reviewCount = dueReviews.length;
                 const newProblemCount = Math.min(newPerDay, settings.dailyCap - reviewCount);
                 
+                setDailyCap(settings.dailyCap);
+                setTargetDays(settings.targetDays);
                 setStudyStats({
                     totalProblems: 75,
                     newCount,
@@ -203,48 +265,6 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
     const masteredByDate = useMemo(() => countMasteredByDate(savedReports), [savedReports]);
     const attemptsByDate = useMemo(() => countAttemptsByDate(savedReports), [savedReports]);
     
-    // Calculate streak
-    const currentStreak = useMemo(() => {
-        let streak = 0;
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        for (let i = 0; i < 365; i++) {
-            const date = new Date(today);
-            date.setDate(date.getDate() - i);
-            const dateStr = getDateString(date);
-            
-            if (masteredByDate[dateStr] && masteredByDate[dateStr] > 0) {
-                streak++;
-            } else if (i > 0) {
-                // Allow today to be 0 without breaking streak
-                break;
-            }
-        }
-        return streak;
-    }, [masteredByDate]);
-    
-    // Calculate total mastered
-    const totalMastered = useMemo(() => {
-        return Object.values(masteredByDate).reduce((sum, count) => sum + count, 0);
-    }, [masteredByDate]);
-    
-    // Calculate this week's total
-    const thisWeekTotal = useMemo(() => {
-        const today = new Date();
-        const startOfWeek = new Date(today);
-        startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
-        startOfWeek.setHours(0, 0, 0, 0);
-        
-        let total = 0;
-        for (let i = 0; i < 7; i++) {
-            const date = new Date(startOfWeek);
-            date.setDate(date.getDate() + i);
-            const dateStr = getDateString(date);
-            total += masteredByDate[dateStr] || 0;
-        }
-        return total;
-    }, [masteredByDate]);
     
     // Filter reports based on selected type
     const filteredReports = savedReports.filter(r => {
@@ -568,13 +588,18 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                      {/* --- PROGRESS TAB --- */}
                      {activeTab === 'progress' && (
                          <div className="space-y-8">
-                             {/* Target Completion Tracker */}
+                             {/* Study Plan Dashboard */}
                              {studyStats && (
                                  <div className="bg-gradient-to-r from-charcoal to-gray-800 rounded-2xl p-6 shadow-lg text-white">
-                                     <div className="flex items-center justify-between mb-4">
+                                     {/* Header */}
+                                     <div className="flex items-center justify-between mb-6">
                                          <div className="flex items-center gap-3">
                                              <Calendar size={20} className="text-gold" />
                                              <span className="text-sm font-bold uppercase tracking-widest text-gold">Study Plan</span>
+                                             <span className="text-sm text-gray-400">•</span>
+                                             <span className="text-sm font-medium text-white">
+                                                 Day {Math.max(1, targetDays - studyStats.daysLeft + 1)} of {targetDays}
+                                             </span>
                                          </div>
                                          <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
                                              studyStats.onPace 
@@ -585,74 +610,64 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                          </div>
                                      </div>
                                      
-                                     {/* Progress Bar */}
-                                     <div className="mb-4">
-                                         <div className="flex justify-between text-xs text-gray-400 mb-2">
-                                             <span>{studyStats.masteredCount + studyStats.learningCount} / 75 introduced</span>
-                                             <span>{studyStats.daysLeft} days left</span>
-                                         </div>
-                                         <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
-                                             <div 
-                                                 className="h-full bg-gradient-to-r from-gold to-yellow-400 transition-all duration-500"
-                                                 style={{ width: `${((studyStats.masteredCount + studyStats.learningCount) / 75) * 100}%` }}
-                                             />
-                                         </div>
-                                     </div>
-                                     
-                                     {/* Today's Queue */}
-                                     <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                                         <div className="text-xs text-gray-400 uppercase tracking-widest mb-2">Today's Queue</div>
-                                         <div className="flex items-center gap-4">
-                                             <div className="flex items-center gap-2">
-                                                 <div className="w-3 h-3 rounded-full bg-blue-400"></div>
-                                                 <span className="text-sm">{studyStats.todaysQueue.newProblems} new</span>
+                                     {/* Progress Cards - Dark Theme */}
+                                     <div className="grid grid-cols-2 gap-4">
+                                         {/* Today's Progress - Clickable */}
+                                         <button 
+                                             onClick={() => setShowTodayDetails(true)}
+                                             className="bg-white/5 rounded-xl p-5 border border-white/10 text-left hover:bg-white/10 hover:border-gold/30 transition-all cursor-pointer group"
+                                         >
+                                             <div className="flex items-center justify-between mb-3">
+                                                 <div className="flex items-center gap-2">
+                                                     <Target size={16} className="text-gold" />
+                                                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Today's Progress</span>
+                                                 </div>
+                                                 <span className="text-[10px] text-gray-500 group-hover:text-gold transition-colors">View details →</span>
                                              </div>
-                                             <div className="flex items-center gap-2">
-                                                 <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
-                                                 <span className="text-sm">{studyStats.todaysQueue.reviews} reviews</span>
+                                             <div className="flex items-baseline gap-2">
+                                                 <span className="text-4xl font-bold text-white">{todayCompleted}</span>
+                                                 <span className="text-xl text-gray-500">/ {dailyCap}</span>
                                              </div>
-                                             <div className="text-gray-500">|</div>
-                                             <span className="text-sm font-bold text-gold">{studyStats.todaysQueue.total} total</span>
-                                         </div>
+                                             <div className="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                                 <div 
+                                                     className="h-full bg-gradient-to-r from-gold to-yellow-400 transition-all duration-500" 
+                                                     style={{ width: `${Math.min(100, (todayCompleted / dailyCap) * 100)}%` }}
+                                                 />
+                                             </div>
+                                             <div className="text-xs text-gray-500 mt-2">
+                                                 {todayCompleted >= dailyCap ? '🎉 Goal reached!' : `${dailyCap - todayCompleted} more to go`}
+                                             </div>
+                                         </button>
+                                         
+                                         {/* Total Progress - Clickable */}
+                                         <button 
+                                             onClick={() => setShowMasteredDetails(true)}
+                                             className="bg-white/5 rounded-xl p-5 border border-white/10 text-left hover:bg-white/10 hover:border-emerald-500/30 transition-all cursor-pointer group"
+                                         >
+                                             <div className="flex items-center justify-between mb-3">
+                                                 <div className="flex items-center gap-2">
+                                                     <TrendingUp size={16} className="text-emerald-400" />
+                                                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Total Progress</span>
+                                                 </div>
+                                                 <span className="text-[10px] text-gray-500 group-hover:text-emerald-400 transition-colors">View all →</span>
+                                             </div>
+                                             <div className="flex items-baseline gap-2">
+                                                 <span className="text-4xl font-bold text-emerald-400">{studyStats.masteredCount}</span>
+                                                 <span className="text-xl text-gray-500">/ 75</span>
+                                             </div>
+                                             <div className="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                                 <div 
+                                                     className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500" 
+                                                     style={{ width: `${(studyStats.masteredCount / 75) * 100}%` }}
+                                                 />
+                                             </div>
+                                             <div className="text-xs text-gray-500 mt-2">
+                                                 {75 - studyStats.masteredCount} problems remaining
+                                             </div>
+                                         </button>
                                      </div>
                                  </div>
                              )}
-                             
-                             {/* Stats Summary Cards - Enhanced */}
-                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
-                                     <div className="flex items-center gap-2 mb-2">
-                                         <Flame size={14} className="text-orange-500" />
-                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Streak</span>
-                                     </div>
-                                     <div className="text-3xl font-bold text-charcoal">{currentStreak}</div>
-                                     <div className="text-xs text-gray-500">days</div>
-                                 </div>
-                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
-                                     <div className="flex items-center gap-2 mb-2">
-                                         <Circle size={14} className="text-blue-500" />
-                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">New</span>
-                                     </div>
-                                     <div className="text-3xl font-bold text-blue-500">{studyStats?.newCount ?? 75}</div>
-                                     <div className="text-xs text-gray-500">not started</div>
-                                 </div>
-                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
-                                     <div className="flex items-center gap-2 mb-2">
-                                         <Clock size={14} className="text-yellow-500" />
-                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Learning</span>
-                                     </div>
-                                     <div className="text-3xl font-bold text-yellow-500">{studyStats?.learningCount ?? 0}</div>
-                                     <div className="text-xs text-gray-500">in progress</div>
-                                 </div>
-                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#EBE8E0]">
-                                     <div className="flex items-center gap-2 mb-2">
-                                         <CheckCircle2 size={14} className="text-emerald-500" />
-                                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mastered</span>
-                                     </div>
-                                     <div className="text-3xl font-bold text-emerald-500">{studyStats?.masteredCount ?? 0}</div>
-                                     <div className="text-xs text-gray-500">completed</div>
-                                 </div>
-                             </div>
                              
                              {/* Blind 75 Problem Grid */}
                              {progressGrid.length > 0 && (
@@ -914,56 +929,6 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                      </div>
                                  </div>
                              </div>
-
-                             {/* Recent Daily History */}
-                             <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#EBE8E0]">
-                                 <h3 className="text-lg font-bold text-charcoal mb-4">Recent Activity</h3>
-                                 <div className="space-y-2">
-                                     {Array.from({ length: 14 }).map((_, i) => {
-                                         const date = new Date();
-                                         date.setDate(date.getDate() - i);
-                                         const dateStr = getDateString(date);
-                                         const mastered = masteredByDate[dateStr] || 0;
-                                         const attempts = attemptsByDate[dateStr] || 0;
-                                         const isToday = i === 0;
-                                         
-                                         return (
-                                             <div 
-                                                 key={dateStr}
-                                                 className={`flex items-center justify-between p-3 rounded-xl transition-colors ${
-                                                     isToday ? 'bg-gold/10 border border-gold/20' : 'hover:bg-gray-50'
-                                                 }`}
-                                             >
-                                                 <div className="flex items-center gap-3">
-                                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-                                                         mastered >= 15 ? 'bg-gold text-white' :
-                                                         mastered > 0 ? 'bg-gold/20 text-gold' :
-                                                         'bg-gray-100 text-gray-400'
-                                                     }`}>
-                                                         {mastered >= 15 ? <Star size={16} fill="currentColor" /> : mastered}
-                                                     </div>
-                                                     <div>
-                                                         <div className={`font-medium ${isToday ? 'text-gold' : 'text-charcoal'}`}>
-                                                             {isToday ? 'Today' : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                                                         </div>
-                                                         <div className="text-xs text-gray-500">
-                                                             {attempts > 0 ? `${attempts} attempts` : 'No activity'}
-                                                         </div>
-                                                     </div>
-                                                 </div>
-                                                 <div className="text-right">
-                                                     <div className={`font-bold ${mastered > 0 ? 'text-gold' : 'text-gray-300'}`}>
-                                                         {mastered} mastered
-                                                     </div>
-                                                     {mastered >= 15 && (
-                                                         <div className="text-xs text-gold">🔥 Goal reached!</div>
-                                                     )}
-                                                 </div>
-                                             </div>
-                                         );
-                                     })}
-                                 </div>
-                             </div>
                          </div>
                      )}
 
@@ -1138,6 +1103,189 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                      )}
                  </div>
              </div>
+             
+             {/* Today's Details Modal */}
+             {showTodayDetails && (
+                 <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowTodayDetails(false)}>
+                     <div 
+                         className="bg-charcoal rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden shadow-2xl border border-white/10"
+                         onClick={(e) => e.stopPropagation()}
+                     >
+                         {/* Header */}
+                         <div className="p-6 border-b border-white/10 flex items-center justify-between">
+                             <div>
+                                 <h2 className="text-xl font-bold text-white">Today's Activity</h2>
+                                 <p className="text-sm text-gray-400 mt-1">
+                                     {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                                 </p>
+                             </div>
+                             <button 
+                                 onClick={() => setShowTodayDetails(false)}
+                                 className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/20 transition-colors"
+                             >
+                                 <X size={16} />
+                             </button>
+                         </div>
+                         
+                         {/* Content */}
+                         <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6">
+                             {/* Mastered Section */}
+                             <div>
+                                 <div className="flex items-center gap-2 mb-3">
+                                     <div className="w-3 h-3 rounded-full bg-emerald-400"></div>
+                                     <span className="text-sm font-bold text-emerald-400 uppercase tracking-widest">
+                                         Mastered ({todayMastered.length})
+                                     </span>
+                                 </div>
+                                 {todayMastered.length === 0 ? (
+                                     <p className="text-gray-500 text-sm italic">No problems mastered yet today</p>
+                                 ) : (
+                                     <div className="space-y-2">
+                                         {todayMastered.map((report, idx) => (
+                                             <div key={idx} className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-center justify-between">
+                                                 <div>
+                                                     <div className="text-white font-medium">{report.title}</div>
+                                                     <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                                                         <span className={report.type === 'teach' ? 'text-purple-400' : 'text-gold'}>
+                                                             {report.type === 'teach' ? '👨‍🏫 Teach' : '🎤 Explain'}
+                                                         </span>
+                                                         <span>•</span>
+                                                         <span>Score: {report.score}</span>
+                                                     </div>
+                                                 </div>
+                                                 <div className="text-emerald-400">✓</div>
+                                             </div>
+                                         ))}
+                                     </div>
+                                 )}
+                             </div>
+                             
+                             {/* Attempted (Not Mastered) Section */}
+                             <div>
+                                 <div className="flex items-center gap-2 mb-3">
+                                     <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+                                     <span className="text-sm font-bold text-yellow-400 uppercase tracking-widest">
+                                         Attempted ({todayAttempted.length})
+                                     </span>
+                                 </div>
+                                 {todayAttempted.length === 0 ? (
+                                     <p className="text-gray-500 text-sm italic">No other attempts today</p>
+                                 ) : (
+                                     <div className="space-y-2">
+                                         {todayAttempted.map((report, idx) => (
+                                             <div key={idx} className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex items-center justify-between">
+                                                 <div>
+                                                     <div className="text-white font-medium">{report.title}</div>
+                                                     <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                                                         <span className={report.type === 'teach' ? 'text-purple-400' : 'text-gold'}>
+                                                             {report.type === 'teach' ? '👨‍🏫 Teach' : '🎤 Explain'}
+                                                         </span>
+                                                         <span>•</span>
+                                                         <span>Score: {report.score}</span>
+                                                     </div>
+                                                 </div>
+                                                 <div className="text-yellow-400 text-xs">Needs review</div>
+                                             </div>
+                                         ))}
+                                     </div>
+                                 )}
+                             </div>
+                             
+                             {/* Summary */}
+                             {todayMastered.length === 0 && todayAttempted.length === 0 && (
+                                 <div className="text-center py-8">
+                                     <div className="text-4xl mb-3">📚</div>
+                                     <p className="text-gray-400">No activity yet today</p>
+                                     <p className="text-gray-500 text-sm mt-1">Start practicing to see your progress!</p>
+                                 </div>
+                             )}
+                         </div>
+                     </div>
+                 </div>
+             )}
+             
+             {/* All Mastered Problems Modal */}
+             {showMasteredDetails && (
+                 <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowMasteredDetails(false)}>
+                     <div 
+                         className="bg-charcoal rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl border border-white/10"
+                         onClick={(e) => e.stopPropagation()}
+                     >
+                         {/* Header */}
+                         <div className="p-6 border-b border-white/10 flex items-center justify-between">
+                             <div>
+                                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                     <TrendingUp size={20} className="text-emerald-400" />
+                                     Mastered Problems
+                                 </h2>
+                                 <p className="text-sm text-gray-400 mt-1">
+                                     {allMasteredProblems.length} of 75 problems completed
+                                 </p>
+                             </div>
+                             <button 
+                                 onClick={() => setShowMasteredDetails(false)}
+                                 className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/20 transition-colors"
+                             >
+                                 <X size={16} />
+                             </button>
+                         </div>
+                         
+                         {/* Content */}
+                         <div className="p-6 overflow-y-auto max-h-[70vh]">
+                             {allMasteredProblems.length === 0 ? (
+                                 <div className="text-center py-12">
+                                     <div className="text-5xl mb-4">🎯</div>
+                                     <p className="text-gray-400 text-lg">No problems mastered yet</p>
+                                     <p className="text-gray-500 text-sm mt-2">Complete problems with a score of 75+ to master them!</p>
+                                 </div>
+                             ) : (
+                                 <div className="space-y-2">
+                                     {allMasteredProblems.map((problem, idx) => (
+                                         <div 
+                                             key={idx} 
+                                             className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 flex items-center justify-between hover:bg-emerald-500/15 transition-colors"
+                                         >
+                                             <div className="flex-1">
+                                                 <div className="text-white font-medium">{problem.title}</div>
+                                                 <div className="text-xs text-gray-400 mt-1 flex items-center gap-3">
+                                                     <span className="text-emerald-400/70">{problem.group}</span>
+                                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                                         problem.difficulty === 'easy' 
+                                                             ? 'bg-green-500/20 text-green-400' 
+                                                             : problem.difficulty === 'medium'
+                                                             ? 'bg-yellow-500/20 text-yellow-400'
+                                                             : 'bg-red-500/20 text-red-400'
+                                                     }`}>
+                                                         {problem.difficulty}
+                                                     </span>
+                                                     {problem.bestScore && (
+                                                         <span className="text-gray-500">Best: {problem.bestScore}</span>
+                                                     )}
+                                                 </div>
+                                             </div>
+                                             <div className="text-emerald-400 text-lg">✓</div>
+                                         </div>
+                                     ))}
+                                 </div>
+                             )}
+                         </div>
+                         
+                         {/* Footer */}
+                         {allMasteredProblems.length > 0 && (
+                             <div className="p-4 border-t border-white/10 bg-white/5">
+                                 <div className="flex items-center justify-between text-sm">
+                                     <span className="text-gray-400">
+                                         {75 - allMasteredProblems.length} problems remaining
+                                     </span>
+                                     <span className="text-emerald-400 font-bold">
+                                         {Math.round((allMasteredProblems.length / 75) * 100)}% complete
+                                     </span>
+                                 </div>
+                             </div>
+                         )}
+                     </div>
+                 </div>
+             )}
         </div>
     );
 };
