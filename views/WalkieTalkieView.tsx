@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Home, ArrowLeft, Mic, StopCircle, ChevronRight, CheckCircle2, Award, Sparkles, Code2, Loader2, BrainCircuit, X, ShieldAlert, BookOpen, Coffee, Trees, Train, Trophy, Star, AlertCircle, Flame, Target, Repeat, Zap, Leaf, GraduationCap, MessageCircle, Volume2, VolumeX, Send, Layers, ExternalLink, Settings, Calendar } from 'lucide-react';
+import { Home, ArrowLeft, Mic, StopCircle, ChevronRight, CheckCircle2, Award, Sparkles, Code2, Loader2, BrainCircuit, X, ShieldAlert, BookOpen, Coffee, Trees, Train, Trophy, Star, AlertCircle, Flame, Target, Repeat, Zap, Leaf, GraduationCap, MessageCircle, Volume2, VolumeX, Send, Layers, ExternalLink, Settings, Calendar, RefreshCw, Lock } from 'lucide-react';
 import { BlindProblem, PerformanceReport, SavedItem, SavedReport, TeachingSession, TeachingTurn, JuniorState, TeachingReport, ReadinessReport } from '../types';
 import { UserStudySettings, StudyStats } from '../types/database';
 import { analyzeWalkieSession, refineTranscript } from '../services/analysisService';
@@ -271,7 +271,77 @@ interface SpotWithTopic {
   topicDisplay: string;  // Formatted display name
   remaining: number;  // Problems not mastered in this topic (or total remaining for random)
   isRandom: boolean;  // Whether this spot uses random/mixed topics
+  locked: boolean;  // Whether the topic is locked (user has entered this spot today)
 }
+
+// Type for saved spot topic assignments (persisted per day)
+// Only spots that have been "entered" are saved/locked
+interface SavedSpotAssignment {
+  spotId: string;
+  topic: string;
+  topicDisplay: string;
+  locked: boolean;  // true = user has entered this spot, topic is frozen for the day
+}
+
+interface SavedDayAssignments {
+  date: string;  // YYYY-MM-DD format
+  assignments: SavedSpotAssignment[];
+}
+
+// Helper to get/save today's locked spot topic assignments from localStorage
+const SPOT_ASSIGNMENTS_KEY = 'walkie_talkie_spot_assignments';
+
+const getLockedSpotAssignments = (userId: string): SavedDayAssignments | null => {
+  try {
+    const key = `${SPOT_ASSIGNMENTS_KEY}_${userId}`;
+    const saved = localStorage.getItem(key);
+    if (!saved) return null;
+    
+    const parsed: SavedDayAssignments = JSON.parse(saved);
+    const todayStr = getDateString(new Date());
+    
+    // Only return if the saved assignments are from today
+    if (parsed.date === todayStr) {
+      return parsed;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error loading saved spot assignments:', error);
+    return null;
+  }
+};
+
+const lockSpotAssignment = (userId: string, spotId: string, topic: string, topicDisplay: string) => {
+  try {
+    const key = `${SPOT_ASSIGNMENTS_KEY}_${userId}`;
+    const todayStr = getDateString(new Date());
+    
+    // Get existing locked assignments
+    const existing = getLockedSpotAssignments(userId);
+    const existingAssignments = existing?.assignments || [];
+    
+    // Check if this spot is already locked
+    const alreadyLocked = existingAssignments.find(a => a.spotId === spotId && a.locked);
+    if (alreadyLocked) return; // Already locked, don't update
+    
+    // Add/update this spot as locked
+    const updatedAssignments = existingAssignments.filter(a => a.spotId !== spotId);
+    updatedAssignments.push({
+      spotId,
+      topic,
+      topicDisplay,
+      locked: true
+    });
+    
+    const data: SavedDayAssignments = {
+      date: todayStr,
+      assignments: updatedAssignments
+    };
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (error) {
+    console.error('Error locking spot assignment:', error);
+  }
+};
 
 const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveReport, masteredIds, onMastered, isSaved, onToggleSave, savedReports }) => {
   // Get auth context for user ID
@@ -308,6 +378,122 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [isLoadingSpots, setIsLoadingSpots] = useState(true);
   
+  // Store progress grid for refresh functionality
+  const [progressGridData, setProgressGridData] = useState<Awaited<ReturnType<typeof getProgressGrid>>>([]);
+  
+  // Helper function to assign random topics to unlocked spots
+  const assignTopicsToSpots = (
+    progressGrid: Awaited<ReturnType<typeof getProgressGrid>>,
+    lockedAssignments: SavedSpotAssignment[]
+  ): SpotWithTopic[] => {
+    const topicsWithRemaining = progressGrid.filter(g => g.masteredCount < g.totalCount);
+    const totalRemaining = topicsWithRemaining.reduce(
+      (sum, g) => sum + (g.totalCount - g.masteredCount), 0
+    );
+    
+    // Get topics that are already locked (to avoid assigning same topic to unlocked spots)
+    const lockedTopics = lockedAssignments.map(a => a.topic);
+    
+    // Filter out locked topics from available topics for unlocked spots
+    const availableTopics = topicsWithRemaining.filter(t => !lockedTopics.includes(t.groupName));
+    const shuffledTopics = [...availableTopics].sort(() => Math.random() - 0.5);
+    
+    let topicIdx = 0;
+    
+    return POWER_SPOTS.map((spot) => {
+      // Handle random/mystery spot
+      if (spot.isRandom) {
+        return {
+          ...spot,
+          topic: 'random',
+          topicDisplay: 'Mixed Topics',
+          remaining: totalRemaining,
+          isRandom: true,
+          locked: false
+        };
+      }
+      
+      // Check if this spot is locked
+      const lockedAssignment = lockedAssignments.find(a => a.spotId === spot.id && a.locked);
+      
+      if (lockedAssignment) {
+        // Use the locked topic
+        const topicGroup = progressGrid.find(g => g.groupName === lockedAssignment.topic);
+        const remaining = topicGroup 
+          ? topicGroup.totalCount - topicGroup.masteredCount 
+          : 0;
+        
+        return {
+          ...spot,
+          topic: lockedAssignment.topic,
+          topicDisplay: lockedAssignment.topicDisplay,
+          remaining,
+          isRandom: false,
+          locked: true
+        };
+      }
+      
+      // Unlocked spot - assign a random topic
+      const topicGroup = shuffledTopics[topicIdx % Math.max(shuffledTopics.length, 1)] 
+        || topicsWithRemaining[topicIdx % Math.max(topicsWithRemaining.length, 1)];
+      topicIdx++;
+      
+      if (topicGroup) {
+        return {
+          ...spot,
+          topic: topicGroup.groupName,
+          topicDisplay: topicGroup.groupName,
+          remaining: topicGroup.totalCount - topicGroup.masteredCount,
+          isRandom: false,
+          locked: false
+        };
+      } else {
+        return {
+          ...spot,
+          topic: 'all_mastered',
+          topicDisplay: 'All Mastered!',
+          remaining: 0,
+          isRandom: false,
+          locked: false
+        };
+      }
+    });
+  };
+  
+  // Refresh a single unlocked spot with a new random topic
+  const handleRefreshSingleSpot = (spotId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent triggering the spot click
+    if (!user?.id || progressGridData.length === 0) return;
+    
+    const topicsWithRemaining = progressGridData.filter(g => g.masteredCount < g.totalCount);
+    
+    // Get topics that are already used by other spots (to avoid duplicates)
+    const usedTopics = spotsWithTopics
+      .filter(s => s.id !== spotId && !s.isRandom)
+      .map(s => s.topic);
+    
+    // Filter out used topics
+    const availableTopics = topicsWithRemaining.filter(t => !usedTopics.includes(t.groupName));
+    
+    if (availableTopics.length === 0) return;
+    
+    // Pick a random topic from available ones
+    const randomTopic = availableTopics[Math.floor(Math.random() * availableTopics.length)];
+    
+    // Update just this spot
+    setSpotsWithTopics(prev => prev.map(spot => {
+      if (spot.id === spotId) {
+        return {
+          ...spot,
+          topic: randomTopic.groupName,
+          topicDisplay: randomTopic.groupName,
+          remaining: randomTopic.totalCount - randomTopic.masteredCount
+        };
+      }
+      return spot;
+    }));
+  };
+  
   // Load settings and assign topics to spots on mount
   useEffect(() => {
     if (!user?.id) return;
@@ -325,56 +511,14 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         
         // Load progress grid to get topics with remaining problems
         const progressGrid = await getProgressGrid(user.id);
+        setProgressGridData(progressGrid);
         
-        // Filter topics that have remaining problems (not all mastered)
-        const topicsWithRemaining = progressGrid.filter(g => g.masteredCount < g.totalCount);
+        // Get locked assignments from today
+        const lockedAssignments = getLockedSpotAssignments(user.id);
+        const lockedOnly = lockedAssignments?.assignments.filter(a => a.locked) || [];
         
-        // Calculate total remaining across all topics (for random/mystery spot)
-        const totalRemaining = topicsWithRemaining.reduce(
-          (sum, g) => sum + (g.totalCount - g.masteredCount), 0
-        );
-        
-        // Shuffle topics for assignment to non-random spots
-        const shuffledTopics = [...topicsWithRemaining].sort(() => Math.random() - 0.5);
-        
-        // Track which topics have been assigned to avoid duplicates
-        let topicIdx = 0;
-        
-        const assignedSpots: SpotWithTopic[] = POWER_SPOTS.map((spot) => {
-          // Handle random/mystery spot
-          if (spot.isRandom) {
-            return {
-              ...spot,
-              topic: 'random',
-              topicDisplay: 'Mixed Topics',
-              remaining: totalRemaining,
-              isRandom: true
-            };
-          }
-          
-          // Assign a specific topic to non-random spots
-          const topicGroup = shuffledTopics[topicIdx % shuffledTopics.length];
-          topicIdx++;
-          
-          if (topicGroup) {
-            return {
-              ...spot,
-              topic: topicGroup.groupName,
-              topicDisplay: topicGroup.groupName,
-              remaining: topicGroup.totalCount - topicGroup.masteredCount,
-              isRandom: false
-            };
-          } else {
-            // No topics with remaining problems - all mastered!
-            return {
-              ...spot,
-              topic: 'all_mastered',
-              topicDisplay: 'All Mastered!',
-              remaining: 0,
-              isRandom: false
-            };
-          }
-        });
+        // Assign topics: locked spots keep their topics, unlocked spots get random topics
+        const assignedSpots = assignTopicsToSpots(progressGrid, lockedOnly);
         
         setSpotsWithTopics(assignedSpots);
       } catch (error) {
@@ -745,6 +889,16 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     setSelectedSpot(spot);
     setStep('curating');
     
+    // Lock this spot's topic for the rest of the day (unless it's the random/mystery spot)
+    if (!spot.isRandom && user?.id) {
+      lockSpotAssignment(user.id, spot.id, spot.topic, spot.topicDisplay);
+      
+      // Update local state to reflect the lock
+      setSpotsWithTopics(prev => prev.map(s => 
+        s.id === spot.id ? { ...s, locked: true } : s
+      ));
+    }
+    
     try {
         let problems: BlindProblem[] = [];
         
@@ -1084,7 +1238,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     switch(icon) {
         case 'coffee': return <Coffee className={iconClass} />;
         case 'park': return <Trees className={iconClass} />;
-        case 'forest': return <Trees className={`${iconClass} text-emerald-400`} />;
+        case 'forest': return <Trees className={iconClass} />; // Color inherited from parent container
         case 'train': return <Train className={iconClass} />;
         default: return <Target className={iconClass} />;
     }
@@ -1093,63 +1247,68 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   if (step === 'locations') {
     return (
       <div className="h-full bg-charcoal text-white flex flex-col font-sans overflow-hidden">
-        {/* Daily Quest Header - Mobile responsive */}
-        <div className="p-4 sm:p-6 md:p-8 pr-16 sm:pr-20 md:pr-24 flex items-center gap-3 sm:gap-4 md:gap-6 border-b border-white/5 shrink-0 bg-black">
-          <button onClick={() => onHome(true)} className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center bg-white/5 rounded-full border border-white/10 hover:bg-white/10 transition-colors shrink-0"><Home size={16} className="sm:w-5 sm:h-5" /></button>
-          
-          <div className="flex-1 text-center min-w-0">
-            <div className="text-[8px] sm:text-[10px] text-gold font-bold tracking-[0.2em] sm:tracking-[0.3em] uppercase mb-1">Daily Quest</div>
-            <div className="flex items-center justify-center gap-2 sm:gap-3">
-                <div className="h-1 sm:h-1.5 w-20 sm:w-32 bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-gold transition-all duration-700" style={{ width: `${((dailyCleared + sessionCleared) / (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap)) * 100}%` }}></div>
+        {/* Daily Quest Header - Single row with absolutely centered Daily Quest */}
+        <div className="border-b border-white/5 shrink-0 bg-black px-4 sm:px-6 py-4 sm:py-5 pr-16 sm:pr-20 relative">
+          {/* Absolutely centered Daily Quest - aligned with content below */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-full max-w-2xl px-4 sm:px-6">
+              <div className="text-center">
+                <div className="text-[8px] sm:text-[10px] text-gold font-bold tracking-[0.2em] sm:tracking-[0.3em] uppercase mb-1">Daily Quest</div>
+                <div className="flex items-center justify-center gap-2 sm:gap-3">
+                    <div className="h-1 sm:h-1.5 w-24 sm:w-40 bg-white/10 rounded-full overflow-hidden">
+                        <div className="h-full bg-gold transition-all duration-700" style={{ width: `${((dailyCleared + sessionCleared) / (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap)) * 100}%` }}></div>
+                    </div>
+                    <span className="text-xs sm:text-sm font-bold font-mono text-gold">{dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap}</span>
                 </div>
-                <span className="text-xs sm:text-sm font-bold font-mono text-gold">{dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap}</span>
+              </div>
             </div>
           </div>
+          
+          {/* Left and Right buttons - positioned normally */}
+          <div className="relative flex items-center justify-between">
+            {/* Left: Home button */}
+            <button onClick={() => onHome(true)} className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center bg-white/5 rounded-full border border-white/10 hover:bg-white/10 transition-colors shrink-0"><Home size={16} className="sm:w-5 sm:h-5" /></button>
+            
+            {/* Right: Action buttons */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Mode Toggle Button */}
+              <button 
+                onClick={() => {
+                  const modes: SessionMode[] = ['paired', 'explain', 'teach'];
+                  const currentIdx = modes.indexOf(sessionMode);
+                  const nextIdx = (currentIdx + 1) % modes.length;
+                  setSessionMode(modes[nextIdx]);
+                }}
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition-all shrink-0 ${
+                  sessionMode === 'paired'
+                    ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                    : sessionMode === 'teach'
+                    ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                    : 'bg-gold/20 border-gold/40 text-gold'
+                }`}
+                title={sessionMode === 'paired' ? 'Paired: Explain → Teach same problem' : sessionMode === 'teach' ? 'Teach only mode' : 'Explain only mode'}
+              >
+                {sessionMode === 'paired' ? (
+                  <><Layers size={12} className="sm:w-3.5 sm:h-3.5" /><span>Paired</span></>
+                ) : sessionMode === 'teach' ? (
+                  <><GraduationCap size={12} className="sm:w-3.5 sm:h-3.5" /><span>Teach</span></>
+                ) : (
+                  <><Mic size={12} className="sm:w-3.5 sm:h-3.5" /><span>Explain</span></>
+                )}
+              </button>
 
-          {/* Mode Toggle Button - Cycles through paired → explain → teach */}
-          <button 
-            onClick={() => {
-              const modes: SessionMode[] = ['paired', 'explain', 'teach'];
-              const currentIdx = modes.indexOf(sessionMode);
-              const nextIdx = (currentIdx + 1) % modes.length;
-              setSessionMode(modes[nextIdx]);
-            }}
-            className={`flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition-all shrink-0 ${
-              sessionMode === 'paired'
-                ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
-                : sessionMode === 'teach'
-                ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
-                : 'bg-gold/20 border-gold/40 text-gold'
-            }`}
-            title={sessionMode === 'paired' ? 'Paired: Explain → Teach same problem' : sessionMode === 'teach' ? 'Teach only mode' : 'Explain only mode'}
-          >
-            {sessionMode === 'paired' ? (
-              <><Layers size={12} className="sm:w-3.5 sm:h-3.5" /><span>Paired</span></>
-            ) : sessionMode === 'teach' ? (
-              <><GraduationCap size={12} className="sm:w-3.5 sm:h-3.5" /><span>Teach</span></>
-            ) : (
-              <><Mic size={12} className="sm:w-3.5 sm:h-3.5" /><span>Explain</span></>
-            )}
-          </button>
-
-          <button 
-            onClick={() => setShowSettings(true)}
-            className="w-9 h-9 sm:w-12 sm:h-12 rounded-full flex items-center justify-center bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 hover:text-white transition-all shrink-0"
-            title="Study Settings"
-          >
-            <Settings size={16} className="sm:w-5 sm:h-5" />
-          </button>
-
-          <button 
-            onClick={() => setShowStats(true)}
-            className="w-9 h-9 sm:w-12 sm:h-12 rounded-full flex items-center justify-center bg-gold/10 border border-gold/20 text-gold hover:bg-gold/20 transition-all shadow-[0_0_20px_rgba(199,169,101,0.1)] shrink-0"
-          >
-            <Trophy size={16} className="sm:w-5 sm:h-5" />
-          </button>
+              <button 
+                onClick={() => setShowSettings(true)}
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 hover:text-white transition-all shrink-0"
+                title="Study Settings"
+              >
+                <Settings size={16} className="sm:w-5 sm:h-5" />
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-4 sm:space-y-6 pb-32 sm:pb-40 max-w-2xl mx-auto w-full">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:px-8 space-y-4 sm:space-y-6 pb-32 sm:pb-40 max-w-2xl mx-auto w-full">
           <div className="text-center mb-2 sm:mb-4">
               <h2 className="text-2xl sm:text-3xl md:text-4xl font-serif font-bold text-white mb-1 sm:mb-2">Power Spots</h2>
               <p className="text-gray-500 text-xs sm:text-sm italic px-4">
@@ -1243,15 +1402,32 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                     <h3 className="text-lg sm:text-xl md:text-2xl font-serif font-bold mb-1 sm:mb-1.5 truncate">{spot.name}</h3>
                     
                     {/* Topic Tag */}
-                    <div className="flex items-center gap-2 mb-1 sm:mb-1.5">
+                    <div className="flex items-center gap-2 mb-1 sm:mb-1.5 flex-wrap">
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-medium ${
                         spot.isRandom 
                           ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-300'
+                          : spot.locked
+                          ? 'bg-amber-500/20 border border-amber-500/30 text-amber-300'
                           : 'bg-blue-500/20 border border-blue-500/30 text-blue-300'
                       }`}>
-                        {spot.isRandom ? <Sparkles size={10} className="sm:w-3 sm:h-3" /> : <Target size={10} className="sm:w-3 sm:h-3" />}
+                        {spot.isRandom ? <Sparkles size={10} className="sm:w-3 sm:h-3" /> : spot.locked ? <Lock size={10} className="sm:w-3 sm:h-3" /> : <Target size={10} className="sm:w-3 sm:h-3" />}
                         {spot.topicDisplay}
                       </span>
+                      {/* Shuffle button for unlocked, non-random spots */}
+                      {!spot.isRandom && !spot.locked && spot.remaining > 0 && (
+                        <button
+                          onClick={(e) => handleRefreshSingleSpot(spot.id, e)}
+                          className="w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center bg-white/5 border border-white/10 text-gray-400 hover:bg-blue-500/20 hover:border-blue-500/30 hover:text-blue-300 transition-all"
+                          title={`Shuffle ${spot.name} topic`}
+                        >
+                          <RefreshCw size={10} className="sm:w-3 sm:h-3" />
+                        </button>
+                      )}
+                      {spot.locked && (
+                        <span className="text-[8px] sm:text-[9px] text-amber-400/70 italic">
+                          locked today
+                        </span>
+                      )}
                       <span className={`text-[9px] sm:text-[10px] font-mono ${spot.remaining === 0 ? 'text-green-400' : 'text-gray-400'}`}>
                         {spot.remaining === 0 ? '✓ Complete' : `${spot.remaining} remaining`}
                       </span>

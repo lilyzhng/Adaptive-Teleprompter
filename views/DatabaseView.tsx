@@ -134,6 +134,14 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
     const [showTodayDetails, setShowTodayDetails] = useState(false);
     const [showMasteredDetails, setShowMasteredDetails] = useState(false);
     
+    // Helper to find the teach report for a problem
+    const findTeachReportForProblem = (problemTitle: string): SavedReport | undefined => {
+        // Find the most recent teach report matching this problem title
+        return savedReports
+            .filter(r => r.type === 'teach' && r.title === problemTitle)
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+    };
+    
     // Get all mastered problems from progressGrid
     const allMasteredProblems = useMemo(() => {
         const mastered: Array<{ title: string; group: string; difficulty: 'easy' | 'medium' | 'hard'; bestScore: number | null }> = [];
@@ -1140,23 +1148,31 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                  {todayMastered.length === 0 ? (
                                      <p className="text-gray-500 text-sm italic">No problems mastered yet today</p>
                                  ) : (
-                                     <div className="space-y-2">
-                                         {todayMastered.map((report, idx) => (
-                                             <div key={idx} className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-center justify-between">
-                                                 <div>
-                                                     <div className="text-white font-medium">{report.title}</div>
-                                                     <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
-                                                         <span className={report.type === 'teach' ? 'text-purple-400' : 'text-gold'}>
-                                                             {report.type === 'teach' ? '👨‍🏫 Teach' : '🎤 Explain'}
-                                                         </span>
-                                                         <span>•</span>
-                                                         <span>Score: {report.score}</span>
-                                                     </div>
-                                                 </div>
-                                                 <div className="text-emerald-400">✓</div>
-                                             </div>
-                                         ))}
-                                     </div>
+                                    <div className="space-y-2">
+                                        {todayMastered.map((report, idx) => (
+                                            <div key={idx} className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-center justify-between">
+                                                <div>
+                                                    <button
+                                                        onClick={() => {
+                                                            setShowTodayDetails(false);
+                                                            navigate(`/report/${titleToSlug(report.title)}`);
+                                                        }}
+                                                        className="text-white font-medium hover:text-emerald-300 hover:underline transition-colors text-left"
+                                                    >
+                                                        {report.title}
+                                                    </button>
+                                                    <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                                                        <span className={report.type === 'teach' ? 'text-purple-400' : 'text-gold'}>
+                                                            {report.type === 'teach' ? '👨‍🏫 Teach' : '🎤 Explain'}
+                                                        </span>
+                                                        <span>•</span>
+                                                        <span>Score: {report.score}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="text-emerald-400">✓</div>
+                                            </div>
+                                        ))}
+                                    </div>
                                  )}
                              </div>
                              
@@ -1171,23 +1187,31 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                  {todayAttempted.length === 0 ? (
                                      <p className="text-gray-500 text-sm italic">No other attempts today</p>
                                  ) : (
-                                     <div className="space-y-2">
-                                         {todayAttempted.map((report, idx) => (
-                                             <div key={idx} className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex items-center justify-between">
-                                                 <div>
-                                                     <div className="text-white font-medium">{report.title}</div>
-                                                     <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
-                                                         <span className={report.type === 'teach' ? 'text-purple-400' : 'text-gold'}>
-                                                             {report.type === 'teach' ? '👨‍🏫 Teach' : '🎤 Explain'}
-                                                         </span>
-                                                         <span>•</span>
-                                                         <span>Score: {report.score}</span>
-                                                     </div>
-                                                 </div>
-                                                 <div className="text-yellow-400 text-xs">Needs review</div>
-                                             </div>
-                                         ))}
-                                     </div>
+                                    <div className="space-y-2">
+                                        {todayAttempted.map((report, idx) => (
+                                            <div key={idx} className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex items-center justify-between">
+                                                <div>
+                                                    <button
+                                                        onClick={() => {
+                                                            setShowTodayDetails(false);
+                                                            navigate(`/report/${titleToSlug(report.title)}`);
+                                                        }}
+                                                        className="text-white font-medium hover:text-yellow-300 hover:underline transition-colors text-left"
+                                                    >
+                                                        {report.title}
+                                                    </button>
+                                                    <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                                                        <span className={report.type === 'teach' ? 'text-purple-400' : 'text-gold'}>
+                                                            {report.type === 'teach' ? '👨‍🏫 Teach' : '🎤 Explain'}
+                                                        </span>
+                                                        <span>•</span>
+                                                        <span>Score: {report.score}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="text-yellow-400 text-xs">Needs review</div>
+                                            </div>
+                                        ))}
+                                    </div>
                                  )}
                              </div>
                              
@@ -1239,34 +1263,52 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                      <p className="text-gray-500 text-sm mt-2">Complete problems with a score of 75+ to master them!</p>
                                  </div>
                              ) : (
-                                 <div className="space-y-2">
-                                     {allMasteredProblems.map((problem, idx) => (
-                                         <div 
-                                             key={idx} 
-                                             className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 flex items-center justify-between hover:bg-emerald-500/15 transition-colors"
-                                         >
-                                             <div className="flex-1">
-                                                 <div className="text-white font-medium">{problem.title}</div>
-                                                 <div className="text-xs text-gray-400 mt-1 flex items-center gap-3">
-                                                     <span className="text-emerald-400/70">{problem.group}</span>
-                                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                                         problem.difficulty === 'easy' 
-                                                             ? 'bg-green-500/20 text-green-400' 
-                                                             : problem.difficulty === 'medium'
-                                                             ? 'bg-yellow-500/20 text-yellow-400'
-                                                             : 'bg-red-500/20 text-red-400'
-                                                     }`}>
-                                                         {problem.difficulty}
-                                                     </span>
-                                                     {problem.bestScore && (
-                                                         <span className="text-gray-500">Best: {problem.bestScore}</span>
-                                                     )}
-                                                 </div>
-                                             </div>
-                                             <div className="text-emerald-400 text-lg">✓</div>
-                                         </div>
-                                     ))}
-                                 </div>
+                                <div className="space-y-2">
+                                    {allMasteredProblems.map((problem, idx) => {
+                                        const teachReport = findTeachReportForProblem(problem.title);
+                                        return (
+                                            <div 
+                                                key={idx} 
+                                                className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 flex items-center justify-between hover:bg-emerald-500/15 transition-colors"
+                                            >
+                                                <div className="flex-1">
+                                                    {teachReport ? (
+                                                        <button
+                                                            onClick={() => {
+                                                                setShowMasteredDetails(false);
+                                                                navigate(`/report/${titleToSlug(problem.title)}`);
+                                                            }}
+                                                            className="text-white font-medium hover:text-emerald-300 hover:underline transition-colors text-left"
+                                                        >
+                                                            {problem.title}
+                                                        </button>
+                                                    ) : (
+                                                        <div className="text-white font-medium">{problem.title}</div>
+                                                    )}
+                                                    <div className="text-xs text-gray-400 mt-1 flex items-center gap-3">
+                                                        <span className="text-emerald-400/70">{problem.group}</span>
+                                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                                            problem.difficulty === 'easy' 
+                                                                ? 'bg-green-500/20 text-green-400' 
+                                                                : problem.difficulty === 'medium'
+                                                                ? 'bg-yellow-500/20 text-yellow-400'
+                                                                : 'bg-red-500/20 text-red-400'
+                                                        }`}>
+                                                            {problem.difficulty}
+                                                        </span>
+                                                        {problem.bestScore && (
+                                                            <span className="text-gray-500">Best: {problem.bestScore}</span>
+                                                        )}
+                                                        {teachReport && (
+                                                            <span className="text-purple-400">👨‍🏫 Report available</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="text-emerald-400 text-lg">✓</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                              )}
                          </div>
                          
