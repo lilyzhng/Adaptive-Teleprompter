@@ -1,13 +1,13 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Edit2, Check, X, Play, Award, Zap, Code2, GraduationCap, Layers, TrendingUp, Target, ChevronLeft, ChevronRight, Clock, AlertCircle, BarChart3 } from 'lucide-react';
+import { Home, Database, Trash2, Lightbulb, PenTool, Star, Ear, Mic2, FileText, Calendar, ArrowLeft, Check, X, Play, Award, Zap, Code2, GraduationCap, Layers, TrendingUp, Target, ChevronLeft, ChevronRight, Clock, AlertCircle, BarChart3 } from 'lucide-react';
 import { SavedItem, SavedReport } from '../types';
 import { StudyStats } from '../types/database';
 import PerformanceReportComponent from '../components/PerformanceReport';
 import TeachingReportComponent from '../components/TeachingReport';
 import ReadinessReportComponent from '../components/ReadinessReport';
-import { titleToSlug, findReportBySlug } from '../utils';
+import { findReportBySlug } from '../utils';
 import { useAuth } from '../contexts/AuthContext';
 import { 
     getSettingsWithDefaults, 
@@ -221,6 +221,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
             date: string;
             timeSpentSeconds: number;
             attemptCount: number;
+            reportId: string; // ID of the best report for this problem
         }>();
         
         for (const r of relevantReports) {
@@ -247,7 +248,8 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                     score,
                     date: r.date,
                     timeSpentSeconds: stats.time, // Use cumulative time from all reports
-                    attemptCount: stats.attempts // Use cumulative attempts from all reports
+                    attemptCount: stats.attempts, // Use cumulative attempts from all reports
+                    reportId: r.id // Store the report ID
                 });
             } else {
                 // Update with better result if this attempt was successful
@@ -255,6 +257,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                     existing.isMastered = true;
                     existing.score = score;
                     existing.type = r.type;
+                    existing.reportId = r.id; // Update to the mastered report ID
                 }
                 // Always use cumulative stats
                 existing.timeSpentSeconds = stats.time;
@@ -359,6 +362,61 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
         return r.type === reportTypeFilter;
     });
     
+    // Group filtered reports by problem title
+    const groupedReports = useMemo(() => {
+        const groups = new Map<string, {
+            title: string;
+            reports: SavedReport[];
+            totalTime: number;
+            bestScore: number;
+            isMastered: boolean;
+            latestDate: string;
+        }>();
+        
+        for (const r of filteredReports) {
+            const existing = groups.get(r.title);
+            const timeSpent = r.reportData?.timeSpentSeconds ?? 0;
+            
+            // Check if this report represents mastery
+            let isMastered = false;
+            if (r.type === 'walkie') {
+                isMastered = r.reportData?.detectedAutoScore === 'good';
+            } else if (r.type === 'teach') {
+                const teachingData = r.reportData?.teachingReportData;
+                isMastered = teachingData?.studentOutcome === 'can_implement' && 
+                            (teachingData?.teachingScore ?? 0) >= 75;
+            }
+            
+            if (!existing) {
+                groups.set(r.title, {
+                    title: r.title,
+                    reports: [r],
+                    totalTime: timeSpent,
+                    bestScore: r.rating,
+                    isMastered,
+                    latestDate: r.date
+                });
+            } else {
+                existing.reports.push(r);
+                existing.totalTime += timeSpent;
+                if (r.rating > existing.bestScore) {
+                    existing.bestScore = r.rating;
+                }
+                if (isMastered) {
+                    existing.isMastered = true;
+                }
+                if (new Date(r.date) > new Date(existing.latestDate)) {
+                    existing.latestDate = r.date;
+                }
+            }
+        }
+        
+        // Sort groups by latest date (most recent first)
+        return Array.from(groups.values()).sort((a, b) => 
+            new Date(b.latestDate).getTime() - new Date(a.latestDate).getTime()
+        );
+    }, [filteredReports]);
+    
     // Count reports by type
     const reportCounts = {
         all: savedReports.length,
@@ -368,17 +426,9 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
         teach: savedReports.filter(r => r.type === 'teach').length,
         readiness: savedReports.filter(r => r.type === 'readiness').length
     };
-
-    const startEditing = (report: SavedReport) => {
-        setEditingReportId(report.id);
-        // Use local time components to match what the user sees in the UI
-        const d = new Date(report.date);
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        const dateStr = `${year}-${month}-${day}`;
-        setEditForm({ title: report.title, date: dateStr });
-    };
+    
+    // Count unique problems
+    const uniqueProblemCount = groupedReports.length;
 
     const cancelEditing = () => {
         setEditingReportId(null);
@@ -544,28 +594,31 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                  </button>
                              </div>
 
-                             {filteredReports.length === 0 ? (
-                                <div className="text-center py-20">
-                                    <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6 text-gray-400">
-                                        <FileText size={32} />
-                                    </div>
-                                    <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">
-                                        {reportTypeFilter === 'all' ? 'No Reports Yet' : `No ${REPORT_TYPE_CONFIG[reportTypeFilter as keyof typeof REPORT_TYPE_CONFIG]?.title || 'Reports'}`}
-                                    </h3>
-                                    <p className="text-gray-500 max-w-sm mx-auto">
-                                        {reportTypeFilter === 'coach' && 'Complete an interview analysis in The Coach to see reports here.'}
-                                        {reportTypeFilter === 'hot-take' && 'Complete a Hot Take drill session to see reports here.'}
-                                        {reportTypeFilter === 'walkie' && 'Practice problems in WalkieTalkie to see reports here.'}
-                                        {reportTypeFilter === 'teach' && 'Complete a teaching session in Teach mode to see reports here.'}
-                                        {reportTypeFilter === 'readiness' && 'Complete the Explain phase (Pass 1) in Paired Learning mode to see reports here.'}
-                                        {reportTypeFilter === 'all' && 'Your performance reports from all features will appear here.'}
-                                    </p>
-                                </div>
+                            {groupedReports.length === 0 ? (
+                               <div className="text-center py-20">
+                                   <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6 text-gray-400">
+                                       <FileText size={32} />
+                                   </div>
+                                   <h3 className="text-2xl font-serif font-bold text-charcoal mb-2">
+                                       {reportTypeFilter === 'all' ? 'No Reports Yet' : `No ${REPORT_TYPE_CONFIG[reportTypeFilter as keyof typeof REPORT_TYPE_CONFIG]?.title || 'Reports'}`}
+                                   </h3>
+                                   <p className="text-gray-500 max-w-sm mx-auto">
+                                       {reportTypeFilter === 'coach' && 'Complete an interview analysis in The Coach to see reports here.'}
+                                       {reportTypeFilter === 'hot-take' && 'Complete a Hot Take drill session to see reports here.'}
+                                       {reportTypeFilter === 'walkie' && 'Practice problems in WalkieTalkie to see reports here.'}
+                                       {reportTypeFilter === 'teach' && 'Complete a teaching session in Teach mode to see reports here.'}
+                                       {reportTypeFilter === 'readiness' && 'Complete the Explain phase (Pass 1) in Paired Learning mode to see reports here.'}
+                                       {reportTypeFilter === 'all' && 'Your performance reports from all features will appear here.'}
+                                   </p>
+                               </div>
                              ) : (
                                  <div className="space-y-4">
-                                     {filteredReports.map(report => {
-                                         const isEditing = editingReportId === report.id;
-                                         const typeConfig = REPORT_TYPE_CONFIG[report.type as keyof typeof REPORT_TYPE_CONFIG];
+                                     {/* Summary */}
+                                     <div className="text-sm text-gray-500 mb-2">
+                                         {uniqueProblemCount} problem{uniqueProblemCount !== 1 ? 's' : ''} • {filteredReports.length} report{filteredReports.length !== 1 ? 's' : ''}
+                                     </div>
+                                     
+                                     {groupedReports.map(group => {
                                          const badgeColors: Record<string, string> = {
                                              'coach': 'bg-gold/10 text-gold',
                                              'hot-take': 'bg-purple-500/10 text-purple-600',
@@ -573,101 +626,116 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                              'teach': 'bg-emerald-500/10 text-emerald-600',
                                              'readiness': 'bg-teal-500/10 text-teal-600'
                                          };
-                                         const ringColors: Record<string, string> = {
-                                             'coach': '#C7A965',
-                                             'hot-take': '#a855f7',
-                                             'walkie': '#3b82f6',
-                                             'teach': '#10b981',
-                                             'readiness': '#14b8a6'
-                                         };
+                                         
                                          return (
-                                         <div key={report.id} className="bg-white rounded-xl p-6 shadow-sm border border-[#EBE8E0] hover:shadow-md transition-shadow flex items-center gap-6 group">
-                                             {/* Score Badge */}
-                                             <div className="shrink-0 relative w-16 h-16 flex items-center justify-center">
-                                                <div className="absolute inset-0 rounded-full" style={{ background: `conic-gradient(${ringColors[report.type]} ${report.rating}%, #F0EBE0 ${report.rating}% 100%)` }}></div>
-                                                <div className="absolute inset-1 bg-white rounded-full flex flex-col items-center justify-center z-10">
-                                                    <span className="text-lg font-serif font-bold text-charcoal">{report.rating}</span>
-                                                </div>
-                                             </div>
-
-                                             <div className="flex-1 min-w-0">
-                                                 <div className="flex items-center gap-2 mb-1">
-                                                     <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full flex items-center gap-1 ${badgeColors[report.type]}`}>
-                                                         {typeConfig?.icon} {typeConfig?.label || report.type}
-                                                     </span>
+                                             <div key={group.title} className="bg-white rounded-xl shadow-sm border border-[#EBE8E0] overflow-hidden">
+                                                 {/* Problem Header */}
+                                                 <div className="p-4 border-b border-gray-100 bg-gray-50/50">
+                                                     <div className="flex items-center justify-between">
+                                                         <div className="flex items-center gap-3">
+                                                             {group.isMastered && (
+                                                                 <div className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center text-white text-xs">✓</div>
+                                                             )}
+                                                             <div>
+                                                                 <h3 className="text-lg font-bold text-charcoal">{group.title}</h3>
+                                                                 <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                                                                     <span>{group.reports.length} attempt{group.reports.length !== 1 ? 's' : ''}</span>
+                                                                     {group.totalTime > 0 && (
+                                                                         <>
+                                                                             <span>•</span>
+                                                                             <span className="flex items-center gap-1">
+                                                                                 <Clock size={10} />
+                                                                                 {formatTimeSpent(group.totalTime)} total
+                                                                             </span>
+                                                                         </>
+                                                                     )}
+                                                                     <span>•</span>
+                                                                     <span>Best: {group.bestScore}</span>
+                                                                 </div>
+                                                             </div>
+                                                         </div>
+                                                     </div>
+                                                 </div>
                                                  
-                                                 {isEditing ? (
-                                                     <input 
-                                                        type="date"
-                                                        value={editForm.date}
-                                                        onChange={(e) => setEditForm({...editForm, date: e.target.value})}
-                                                        className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-0.5 focus:border-gold outline-none"
-                                                     />
-                                                 ) : (
-                                                     <span className="text-xs text-gray-400 flex items-center gap-1">
-                                                         <Calendar size={12} /> {new Date(report.date).toLocaleDateString()}
-                                                     </span>
-                                                 )}
+                                                 {/* Individual Reports */}
+                                                 <div className="divide-y divide-gray-100">
+                                                     {group.reports
+                                                         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                                         .map(report => {
+                                                             const typeConfig = REPORT_TYPE_CONFIG[report.type as keyof typeof REPORT_TYPE_CONFIG];
+                                                             const timeSpent = report.reportData?.timeSpentSeconds;
+                                                             const isEditing = editingReportId === report.id;
+                                                             
+                                                             return (
+                                                                 <div key={report.id} className="p-4 flex items-center gap-4 hover:bg-gray-50 transition-colors group">
+                                                                     {/* Score */}
+                                                                     <div className="shrink-0 w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                                                                         <span className="text-sm font-bold text-charcoal">{report.rating}</span>
+                                                                     </div>
+                                                                     
+                                                                     {/* Details */}
+                                                                     <div className="flex-1 min-w-0">
+                                                                         <div className="flex items-center gap-2 flex-wrap">
+                                                                             <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full flex items-center gap-1 ${badgeColors[report.type]}`}>
+                                                                                 {typeConfig?.icon} {typeConfig?.label || report.type}
+                                                                             </span>
+                                                                             <span className="text-xs text-gray-400 flex items-center gap-1">
+                                                                                 <Calendar size={10} />
+                                                                                 {new Date(report.date).toLocaleDateString()} {new Date(report.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                             </span>
+                                                                             {timeSpent && timeSpent > 0 && (
+                                                                                 <span className="text-xs text-gray-400 flex items-center gap-1">
+                                                                                     <Clock size={10} />
+                                                                                     {formatTimeSpent(timeSpent)}
+                                                                                 </span>
+                                                                             )}
+                                                                         </div>
+                                                                     </div>
+                                                                     
+                                                                     {/* Actions */}
+                                                                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                         {isEditing ? (
+                                                                             <>
+                                                                                 <button 
+                                                                                     onClick={() => saveEditing(report.id)}
+                                                                                     className="p-1.5 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors"
+                                                                                     title="Save"
+                                                                                 >
+                                                                                     <Check size={14} />
+                                                                                 </button>
+                                                                                 <button 
+                                                                                     onClick={cancelEditing}
+                                                                                     className="p-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors"
+                                                                                     title="Cancel"
+                                                                                 >
+                                                                                     <X size={14} />
+                                                                                 </button>
+                                                                             </>
+                                                                         ) : (
+                                                                             <>
+                                                                                 <button 
+                                                                                     onClick={() => navigate(`/report/${report.id}`)}
+                                                                                     className="px-3 py-1.5 bg-charcoal text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-colors"
+                                                                                 >
+                                                                                     View
+                                                                                 </button>
+                                                                                 <button 
+                                                                                     onClick={(e) => { e.stopPropagation(); onDeleteReport(report.id); }}
+                                                                                     className="p-1.5 text-gray-300 hover:text-red-400 transition-colors"
+                                                                                     title="Delete"
+                                                                                 >
+                                                                                     <Trash2 size={14} />
+                                                                                 </button>
+                                                                             </>
+                                                                         )}
+                                                                     </div>
+                                                                 </div>
+                                                             );
+                                                         })}
+                                                 </div>
                                              </div>
-                                             
-                                             {isEditing ? (
-                                                 <input 
-                                                     type="text"
-                                                     value={editForm.title}
-                                                     onChange={(e) => setEditForm({...editForm, title: e.target.value})}
-                                                     className="text-lg font-bold text-charcoal w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 focus:border-gold outline-none"
-                                                     autoFocus
-                                                 />
-                                             ) : (
-                                                 <h3 className="text-lg font-bold text-charcoal truncate">{report.title}</h3>
-                                             )}
-                                         </div>
-
-                                         <div className={`flex items-center gap-3 transition-opacity ${isEditing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                                             {isEditing ? (
-                                                 <>
-                                                     <button 
-                                                        onClick={() => saveEditing(report.id)}
-                                                        className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors"
-                                                        title="Save Changes"
-                                                     >
-                                                         <Check size={16} />
-                                                     </button>
-                                                     <button 
-                                                        onClick={cancelEditing}
-                                                        className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
-                                                        title="Cancel"
-                                                     >
-                                                         <X size={16} />
-                                                     </button>
-                                                 </>
-                                             ) : (
-                                                 <>
-                                                     <button 
-                                                        onClick={() => startEditing(report)}
-                                                        className="p-2 text-gray-300 hover:text-gold transition-colors"
-                                                        title="Edit Report Details"
-                                                     >
-                                                         <Edit2 size={16} />
-                                                     </button>
-                                                    <button 
-                                                       onClick={() => navigate(`/report/${titleToSlug(report.title)}`)}
-                                                       className="px-4 py-2 bg-charcoal text-white rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-black transition-colors"
-                                                    >
-                                                       View
-                                                    </button>
-                                                     <button 
-                                                        onClick={(e) => { e.stopPropagation(); onDeleteReport(report.id); }}
-                                                        className="p-2 text-gray-300 hover:text-red-400 transition-colors"
-                                                        title="Delete Report"
-                                                     >
-                                                         <Trash2 size={16} />
-                                                     </button>
-                                                 </>
-                                             )}
-                                         </div>
-                                    </div>
-                                )})}
+                                         );
+                                     })}
                             </div>
                          )}
                          </>
@@ -1270,7 +1338,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                    <button
                                                        onClick={() => {
                                                            setShowTodayDetails(false);
-                                                           navigate(`/report/${titleToSlug(report.title)}`);
+                                                           navigate(`/report/${report.reportId}`);
                                                        }}
                                                        className="text-white font-medium hover:text-emerald-300 hover:underline transition-colors text-left"
                                                    >
@@ -1319,7 +1387,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                    <button
                                                        onClick={() => {
                                                            setShowTodayDetails(false);
-                                                           navigate(`/report/${titleToSlug(report.title)}`);
+                                                           navigate(`/report/${report.reportId}`);
                                                        }}
                                                        className="text-white font-medium hover:text-yellow-300 hover:underline transition-colors text-left"
                                                    >
@@ -1411,7 +1479,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                         <button
                                                             onClick={() => {
                                                                 setShowMasteredDetails(false);
-                                                                navigate(`/report/${titleToSlug(problem.title)}`);
+                                                                navigate(`/report/${teachReport.id}`);
                                                             }}
                                                             className="text-white font-medium hover:text-emerald-300 hover:underline transition-colors text-left"
                                                         >

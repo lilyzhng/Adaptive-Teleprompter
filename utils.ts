@@ -184,7 +184,12 @@ export const titleToSlug = (title: string): string => {
     .replace(/^-+|-+$/g, '');  // Remove leading and trailing hyphens
 };
 
-// Utility to find report by slug
-export const findReportBySlug = <T extends { title: string }>(reports: T[], slug: string): T | undefined => {
+// Utility to find report by slug (supports both ID-based and title-based lookups for backwards compatibility)
+export const findReportBySlug = <T extends { id: string; title: string }>(reports: T[], slug: string): T | undefined => {
+  // First try to find by ID (new format: id-based slugs)
+  const byId = reports.find(report => report.id === slug);
+  if (byId) return byId;
+  
+  // Fall back to title-based lookup for backwards compatibility
   return reports.find(report => titleToSlug(report.title) === slug);
 };
