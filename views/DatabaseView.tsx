@@ -178,14 +178,52 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
         return mastered;
     }, [progressGrid]);
     
-    // Calculate today's reports with details
-    const todayReports = useMemo(() => {
+    // Get all today's reports (including readiness reports for time tracking)
+    const todayAllReports = useMemo(() => {
         const todayStr = getDateString(new Date());
         return savedReports.filter(r => {
+            if (r.type !== 'walkie' && r.type !== 'teach' && r.type !== 'readiness') return false;
+            const reportDate = getDateString(r.date);
+            return reportDate === todayStr;
+        });
+    }, [savedReports]);
+    
+    // Calculate cumulative time and attempt count per problem (sum all attempts: explain + teach + retries)
+    const problemStatsMap = useMemo(() => {
+        const statsMap: Record<string, { time: number; attempts: number }> = {};
+        for (const r of todayAllReports) {
+            const time = r.reportData?.timeSpentSeconds ?? 0;
+            if (!statsMap[r.title]) {
+                statsMap[r.title] = { time: 0, attempts: 0 };
+            }
+            statsMap[r.title].time += time;
+            statsMap[r.title].attempts += 1;
+        }
+        return statsMap;
+    }, [todayAllReports]);
+    
+    // Calculate today's reports with details (grouped by problem, with cumulative time)
+    const todayReports = useMemo(() => {
+        const todayStr = getDateString(new Date());
+        // Get only walkie and teach reports for display (not readiness)
+        const relevantReports = savedReports.filter(r => {
             if (r.type !== 'walkie' && r.type !== 'teach') return false;
             const reportDate = getDateString(r.date);
             return reportDate === todayStr;
-        }).map(r => {
+        });
+        
+        // Group by problem title - take the best/latest result per problem
+        const problemMap = new Map<string, {
+            title: string;
+            type: string;
+            isMastered: boolean;
+            score: number;
+            date: string;
+            timeSpentSeconds: number;
+            attemptCount: number;
+        }>();
+        
+        for (const r of relevantReports) {
             let isMastered = false;
             let score = 0;
             
@@ -199,21 +237,38 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                 score = teachingData?.teachingScore ?? 0;
             }
             
-            return {
-                title: r.title,
-                type: r.type,
-                isMastered,
-                score,
-                date: r.date,
-                timeSpentSeconds: r.reportData?.timeSpentSeconds
-            };
-        });
-    }, [savedReports]);
+            const stats = problemStatsMap[r.title] || { time: 0, attempts: 0 };
+            const existing = problemMap.get(r.title);
+            if (!existing) {
+                problemMap.set(r.title, {
+                    title: r.title,
+                    type: r.type,
+                    isMastered,
+                    score,
+                    date: r.date,
+                    timeSpentSeconds: stats.time, // Use cumulative time from all reports
+                    attemptCount: stats.attempts // Use cumulative attempts from all reports
+                });
+            } else {
+                // Update with better result if this attempt was successful
+                if (isMastered && !existing.isMastered) {
+                    existing.isMastered = true;
+                    existing.score = score;
+                    existing.type = r.type;
+                }
+                // Always use cumulative stats
+                existing.timeSpentSeconds = stats.time;
+                existing.attemptCount = stats.attempts;
+            }
+        }
+        
+        return Array.from(problemMap.values());
+    }, [savedReports, problemStatsMap]);
     
-    // Calculate today's total study time
+    // Calculate today's total study time (sum of all individual report times)
     const todayTotalTime = useMemo(() => {
-        return todayReports.reduce((sum, r) => sum + (r.timeSpentSeconds || 0), 0);
-    }, [todayReports]);
+        return todayAllReports.reduce((sum, r) => sum + (r.reportData?.timeSpentSeconds || 0), 0);
+    }, [todayAllReports]);
     
     // Split into mastered and attempted (not mastered)
     const todayMastered = useMemo(() => 
@@ -1233,6 +1288,7 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                                <span className="flex items-center gap-1 text-gray-500">
                                                                    <Clock size={10} />
                                                                    {formatTimeSpent(report.timeSpentSeconds)}
+                                                                   {report.attemptCount > 1 && ` (${report.attemptCount} attempts)`}
                                                                </span>
                                                            </>
                                                        )}
@@ -1281,12 +1337,13 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                                <span className="flex items-center gap-1 text-gray-500">
                                                                    <Clock size={10} />
                                                                    {formatTimeSpent(report.timeSpentSeconds)}
+                                                                   {report.attemptCount > 1 && ` (${report.attemptCount} attempts)`}
                                                                </span>
                                                            </>
                                                        )}
                                                    </div>
                                                </div>
-                                                <div className="text-yellow-400 text-xs">Needs review</div>
+                                                <div className="text-yellow-400 text-xs ml-2">Needs review</div>
                                             </div>
                                         ))}
                                     </div>

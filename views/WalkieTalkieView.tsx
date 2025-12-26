@@ -598,15 +598,15 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   
-  // Time tracking - track when the current problem started
+  // Time tracking - track when the current attempt started
   const problemStartTimeRef = useRef<number>(Date.now());
   
-  // Helper to get elapsed time in seconds since problem started
+  // Helper to get elapsed time in seconds for current attempt
   const getElapsedSeconds = (): number => {
     return Math.round((Date.now() - problemStartTimeRef.current) / 1000);
   };
   
-  // Helper to reset the problem start time (call when showing a new problem)
+  // Helper to reset the timer (call when starting any new attempt)
   const resetProblemStartTime = () => {
     problemStartTimeRef.current = Date.now();
   };
