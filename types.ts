@@ -154,6 +154,8 @@ export interface PerformanceReport {
   readinessProblem?: BlindProblem; // The problem data for model answer display
   rawTranscript?: string;
   refinedTranscript?: string;
+  // Time tracking
+  timeSpentSeconds?: number; // Time spent on this problem in seconds
 }
 
 export interface SavedItem {

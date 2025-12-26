@@ -597,6 +597,19 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  
+  // Time tracking - track when the current problem started
+  const problemStartTimeRef = useRef<number>(Date.now());
+  
+  // Helper to get elapsed time in seconds since problem started
+  const getElapsedSeconds = (): number => {
+    return Math.round((Date.now() - problemStartTimeRef.current) / 1000);
+  };
+  
+  // Helper to reset the problem start time (call when showing a new problem)
+  const resetProblemStartTime = () => {
+    problemStartTimeRef.current = Date.now();
+  };
 
   const currentProblem = problemQueue[currentQueueIdx];
 
@@ -644,6 +657,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         setJuniorQuestion("");
         setRevealHintIdx(0);
         setUsedHints(false);
+        
+        // Reset timer for this problem
+        resetProblemStartTime();
         
         // Start teaching
         setStep('teaching');
@@ -761,7 +777,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                   readinessReportData: hintPenaltyReport,
                   readinessProblem: currentProblem,
                   rawTranscript: rawTranscript,
-                  refinedTranscript: rawTranscript
+                  refinedTranscript: rawTranscript,
+                  timeSpentSeconds: getElapsedSeconds()
                 };
                 onSaveReport(currentProblem.title, 'readiness', hintPenaltyPerformanceReport);
                 
@@ -783,7 +800,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                 readinessReportData: readiness,
                 readinessProblem: currentProblem,
                 rawTranscript: rawTranscript,
-                refinedTranscript: rawTranscript
+                refinedTranscript: rawTranscript,
+                timeSpentSeconds: getElapsedSeconds()
               };
               onSaveReport(currentProblem.title, 'readiness', readinessPerformanceReport);
               
@@ -824,6 +842,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                 score = 'partial';
               }
               report.detectedAutoScore = score;
+              report.timeSpentSeconds = getElapsedSeconds();
               
               setAiReport(report);
 
@@ -957,6 +976,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         setTranscript("");
         setRawTranscript("");
         
+        // Reset timer when starting a new problem
+        resetProblemStartTime();
+        
         // Initialize based on session mode
         if (sessionMode === 'teach') {
             // Direct teach mode - skip explain step
@@ -998,6 +1020,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     // Reset hints - user should try without hints this time
     setRevealHintIdx(0);
     setUsedHints(false);
+    // Reset timer for fresh attempt
+    resetProblemStartTime();
     setStep('problem');
   };
 
@@ -1083,7 +1107,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           teachingReportData: report,
           teachingSession: updatedSession,  // Include the full dialog
           juniorSummary: finalSession.juniorSummary,
-          teachingProblem: currentProblem  // Include problem for model answer display
+          teachingProblem: currentProblem,  // Include problem for model answer display
+          timeSpentSeconds: getElapsedSeconds()
         };
         onSaveReport(currentProblem.title, 'teach', performanceReport);
         
@@ -1158,7 +1183,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         teachingReportData: report,
         teachingSession: finalSession,  // Include the full dialog
         juniorSummary: finalSession.juniorSummary,
-        teachingProblem: currentProblem  // Include problem for model answer display
+        teachingProblem: currentProblem,  // Include problem for model answer display
+        timeSpentSeconds: getElapsedSeconds()
       };
       onSaveReport(currentProblem.title, 'teach', performanceReport);
       
@@ -1207,6 +1233,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
       setTranscript("");
       setRawTranscript("");
       
+      // Reset timer for the new problem
+      resetProblemStartTime();
+      
       if (sessionMode === 'paired') {
         // Paired mode: go back to explain step for next problem
         setStep('problem');
@@ -1230,6 +1259,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     setTeachingReport(null);
     setTeachingRawTranscript("");
     setJuniorQuestion("");
+    // Reset timer for fresh teaching attempt
+    resetProblemStartTime();
     setStep('teaching');
   };
 

@@ -251,6 +251,8 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                 setTranscriptionResult(manualTranscript); // Treat manual as the result
                 
                 const report = await analyzeStage2_Coach(base64Audio, manualTranscript, uploadContext, mimeType);
+                // Store transcript in report for later retrieval
+                report.refinedTranscript = manualTranscript;
                 setPerformanceReport(report);
                 await onSaveReport(uploadContext || "Coach Session", 'coach', report);
                 clearSessionData();
@@ -265,6 +267,9 @@ const AnalysisView: React.FC<AnalysisViewProps> = ({ onHome, isSaved, onToggleSa
                 // Phase 2: Coach (Automatic Transition)
                 setAnalysisStep('analyzing');
                 const report = await analyzeStage2_Coach(base64Audio, transcript, uploadContext, mimeType);
+                
+                // Store transcript in report for later retrieval
+                report.refinedTranscript = transcript;
                 
                 // Set report FIRST before saving
                 setPerformanceReport(report);
