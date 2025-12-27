@@ -180,6 +180,7 @@ const getDateString = (date: Date | string): string => {
 // Helper to count questions solved per day from saved reports
 const countQuestionsByDate = (reports: SavedReport[]): Record<string, number> => {
   const counts: Record<string, number> = {};
+  const uniquePerDay: Record<string, Set<string>> = {};
   
   // Only count walkie and teach reports that were "mastered"
   // Walkie: detectedAutoScore === 'good'
@@ -197,7 +198,16 @@ const countQuestionsByDate = (reports: SavedReport[]): Record<string, number> =>
   
   for (const report of relevantReports) {
     const dateStr = getDateString(report.date);
-    counts[dateStr] = (counts[dateStr] || 0) + 1;
+    
+    if (!uniquePerDay[dateStr]) {
+      uniquePerDay[dateStr] = new Set();
+    }
+    
+    // Only count unique problems per day
+    if (!uniquePerDay[dateStr].has(report.title)) {
+      uniquePerDay[dateStr].add(report.title);
+      counts[dateStr] = (counts[dateStr] || 0) + 1;
+    }
   }
   
   return counts;
@@ -240,7 +250,7 @@ const POWER_SPOTS = [
     name: 'The Daily Commute', 
     ritual: 'Transit', 
     icon: 'train', 
-    description: 'Reviews first... Never miss your daily reviews!',
+    description: 'Never miss your daily reviews!',
     isRandom: false,
     reviewsPriority: true,
     onlyReviews: true
@@ -614,9 +624,6 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     return counts[todayStr] || 0;
   }, [savedReports]);
   
-  // Session-local counter for immediate feedback (before reports are saved)
-  const [sessionCleared, setSessionCleared] = useState(0);
-  
   const totalConquered = useMemo(() => {
     // Count all mastered questions from saved reports (uses same logic as countQuestionsByDate)
     const counts = countQuestionsByDate(savedReports);
@@ -941,7 +948,6 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
               if (score === 'good') {
                   onMastered(currentProblem.title);
                   setSessionScore(prev => prev + 1);
-                  setSessionCleared(prev => prev + 1);
               }
 
               setStep('reveal');
@@ -1001,7 +1007,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         
         // Calculate remaining problems for today's goal
         const dailyGoal = studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap;
-        const completedToday = dailyCleared + sessionCleared;
+        const completedToday = dailyCleared;
         const remainingToday = Math.max(0, dailyGoal - completedToday);
         
         // Cap batch size at remaining daily goal or a reasonable max
@@ -1240,7 +1246,6 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         if (report.studentOutcome === 'can_implement' && report.teachingScore >= 75) {
           onMastered(currentProblem.title);
           setSessionScore(prev => prev + 1);
-          setSessionCleared(prev => prev + 1);
         }
         
         setStep('teaching_reveal');
@@ -1316,7 +1321,6 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
       if (report.studentOutcome === 'can_implement' && report.teachingScore >= 75) {
         onMastered(currentProblem.title);
         setSessionScore(prev => prev + 1);
-        setSessionCleared(prev => prev + 1);
       }
       
       setStep('teaching_reveal');
@@ -1458,9 +1462,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                 <div className="text-[8px] sm:text-[10px] text-gold font-bold tracking-[0.2em] sm:tracking-[0.3em] uppercase mb-1">Daily Quest</div>
                 <div className="flex items-center justify-center gap-2 sm:gap-3">
                     <div className="h-1 sm:h-1.5 w-24 sm:w-40 bg-white/10 rounded-full overflow-hidden">
-                        <div className="h-full bg-gold transition-all duration-700" style={{ width: `${((dailyCleared + sessionCleared) / (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap)) * 100}%` }}></div>
+                        <div className="h-full bg-gold transition-all duration-700" style={{ width: `${((dailyCleared) / (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap)) * 100}%` }}></div>
                     </div>
-                    <span className="text-xs sm:text-sm font-bold font-mono text-gold">{dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap}</span>
+                    <span className="text-xs sm:text-sm font-bold font-mono text-gold">{dailyCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap}</span>
                 </div>
               </div>
             </div>
@@ -1657,7 +1661,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
             ))
           )}
 
-          {(dailyCleared + sessionCleared) >= (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap) && (
+          {(dailyCleared) >= (studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap) && (
             <div className="bg-gold/10 border border-gold/40 rounded-2xl sm:rounded-[2.5rem] p-6 sm:p-10 text-center animate-in zoom-in duration-500">
                 <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gold rounded-full flex items-center justify-center text-charcoal mx-auto mb-3 sm:mb-4 shadow-[0_0_30px_rgba(199,169,101,0.4)]">
                     <Star size={24} className="sm:w-8 sm:h-8" fill="currentColor" />
@@ -1986,7 +1990,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           </div>
           <div className="flex items-center gap-2">
             <div className="px-3 py-1.5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
-              {dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap} today
+              {dailyCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap} today
             </div>
           </div>
         </div>
@@ -2025,7 +2029,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                 {selectedSpot?.name}
              </div>
              <div className="px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full border border-white/10 text-[8px] sm:text-[10px] font-bold text-gray-400 bg-white/5 uppercase tracking-wider sm:tracking-widest whitespace-nowrap">
-                {dailyCleared + sessionCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap} today
+                {dailyCleared}/{studySettings?.dailyCap || DEFAULT_SETTINGS.dailyCap} today
              </div>
           </div>
         </div>

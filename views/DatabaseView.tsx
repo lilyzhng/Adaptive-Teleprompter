@@ -35,6 +35,7 @@ const getDateString = (date: Date | string): string => {
 // Helper to count mastered questions by date from saved reports
 const countMasteredByDate = (reports: SavedReport[]): Record<string, number> => {
   const counts: Record<string, number> = {};
+  const uniquePerDay: Record<string, Set<string>> = {};
   
   const relevantReports = reports.filter(r => {
     if (r.type === 'walkie') {
@@ -49,7 +50,16 @@ const countMasteredByDate = (reports: SavedReport[]): Record<string, number> => 
   
   for (const report of relevantReports) {
     const dateStr = getDateString(report.date);
-    counts[dateStr] = (counts[dateStr] || 0) + 1;
+    
+    if (!uniquePerDay[dateStr]) {
+      uniquePerDay[dateStr] = new Set();
+    }
+    
+    // Only count unique problems per day
+    if (!uniquePerDay[dateStr].has(report.title)) {
+      uniquePerDay[dateStr].add(report.title);
+      counts[dateStr] = (counts[dateStr] || 0) + 1;
+    }
   }
   
   return counts;
