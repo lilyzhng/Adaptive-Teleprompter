@@ -6,7 +6,7 @@ import { BlindProblem, PerformanceReport, SavedItem, SavedReport, TeachingSessio
 import { UserStudySettings, StudyStats } from '../types/database';
 import { supabase } from '../config/supabase';
 import { analyzeWalkieSession, refineTranscript } from '../services/analysisService';
-import { buildProblemQueue, fetchBlindProblemByTitle, fetchUserProgressByTitle } from '../services/databaseService';
+import { buildProblemQueue, fetchBlindProblemByTitle, fetchUserProgressByTitle, fetchDueReviews } from '../services/databaseService';
 import { 
   getInitialJuniorState, 
   getJuniorResponse, 
@@ -236,12 +236,14 @@ const getDailyStats = (reports: SavedReport[], days: number = 7): DailyStats[] =
 // 3 REAL WORLD LOCATIONS - Two with specific topics, one random (mystery)
 const POWER_SPOTS = [
   { 
-    id: 'spot1', 
-    name: 'The Mysterious Forest', 
-    ritual: 'Adventure', 
-    icon: 'forest', 
-    description: 'Venture into the unknown with mixed challenges.',
-    isRandom: true
+    id: 'spot3', 
+    name: 'The Daily Commute', 
+    ritual: 'Transit', 
+    icon: 'train', 
+    description: 'Reviews first... Never miss your daily reviews!',
+    isRandom: false,
+    reviewsPriority: true,
+    onlyReviews: true
   },
   { 
     id: 'spot2', 
@@ -249,15 +251,17 @@ const POWER_SPOTS = [
     ritual: 'Deep Focus', 
     icon: 'coffee', 
     description: 'A warm brew and focused topic practice.',
-    isRandom: false
+    isRandom: false,
+    reviewsPriority: false
   },
   { 
-    id: 'spot3', 
-    name: 'The Daily Commute', 
-    ritual: 'Transit', 
-    icon: 'train', 
-    description: 'Quick-fire problem solving on the move.',
-    isRandom: false
+    id: 'spot1', 
+    name: 'The Mysterious Forest', 
+    ritual: 'Adventure', 
+    icon: 'forest', 
+    description: 'Venture into the unknown with mixed challenges.',
+    isRandom: true,
+    reviewsPriority: false
   }
 ];
 
@@ -273,6 +277,8 @@ interface SpotWithTopic {
   remaining: number;  // Problems not mastered in this topic (or total remaining for random)
   isRandom: boolean;  // Whether this spot uses random/mixed topics
   locked: boolean;  // Whether the topic is locked (user has entered this spot today)
+  reviewsPriority: boolean;  // Whether this spot prioritizes all reviews first (ignores topic filtering for reviews)
+  onlyReviews?: boolean; // If true, this spot only serves reviews and locks when done
 }
 
 // Type for saved spot topic assignments (persisted per day)
@@ -385,7 +391,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   // Helper function to assign random topics to unlocked spots
   const assignTopicsToSpots = (
     progressGrid: Awaited<ReturnType<typeof getProgressGrid>>,
-    lockedAssignments: SavedSpotAssignment[]
+    lockedAssignments: SavedSpotAssignment[],
+    dueReviewCount: number = 0
   ): SpotWithTopic[] => {
     const topicsWithRemaining = progressGrid.filter(g => g.masteredCount < g.totalCount);
     const totalRemaining = topicsWithRemaining.reduce(
@@ -402,6 +409,21 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     let topicIdx = 0;
     
     return POWER_SPOTS.map((spot) => {
+      // Handle "Only Reviews" spots (e.g. Daily Commute)
+      if ((spot as any).onlyReviews) {
+        const isCompleted = dueReviewCount === 0;
+        return {
+          ...spot,
+          topic: 'reviews',
+          topicDisplay: 'Daily Reviews',
+          remaining: dueReviewCount,
+          isRandom: false,
+          locked: isCompleted, // Lock if no reviews due
+          reviewsPriority: spot.reviewsPriority,
+          onlyReviews: true
+        };
+      }
+
       // Handle random/mystery spot
       if (spot.isRandom) {
         return {
@@ -410,7 +432,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           topicDisplay: 'Mixed Topics',
           remaining: totalRemaining,
           isRandom: true,
-          locked: false
+          locked: false,
+          reviewsPriority: spot.reviewsPriority,
+          onlyReviews: (spot as any).onlyReviews
         };
       }
       
@@ -430,7 +454,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           topicDisplay: lockedAssignment.topicDisplay,
           remaining,
           isRandom: false,
-          locked: true
+          locked: true,
+          reviewsPriority: spot.reviewsPriority,
+          onlyReviews: (spot as any).onlyReviews
         };
       }
       
@@ -446,7 +472,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           topicDisplay: topicGroup.groupName,
           remaining: topicGroup.totalCount - topicGroup.masteredCount,
           isRandom: false,
-          locked: false
+          locked: false,
+          reviewsPriority: spot.reviewsPriority,
+          onlyReviews: (spot as any).onlyReviews
         };
       } else {
         return {
@@ -455,7 +483,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
           topicDisplay: 'All Mastered!',
           remaining: 0,
           isRandom: false,
-          locked: false
+          locked: false,
+          reviewsPriority: spot.reviewsPriority,
+          onlyReviews: (spot as any).onlyReviews
         };
       }
     });
@@ -495,42 +525,60 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     }));
   };
   
-  // Load settings and assign topics to spots on mount
-  useEffect(() => {
+  // Load settings and assign topics to spots
+  const loadSettingsAndTopics = React.useCallback(async () => {
     if (!user?.id) return;
     
-    const loadSettingsAndTopics = async () => {
-      setIsLoadingSpots(true);
-      try {
-        // Load settings
-        const settings = await getSettingsWithDefaults(user.id);
-        setStudySettings(settings);
-        setSettingsForm({
-          targetDays: settings.targetDays,
-          dailyCap: settings.dailyCap
-        });
-        
-        // Load progress grid to get topics with remaining problems
-        const progressGrid = await getProgressGrid(user.id);
-        setProgressGridData(progressGrid);
-        
-        // Get locked assignments from today
-        const lockedAssignments = getLockedSpotAssignments(user.id);
-        const lockedOnly = lockedAssignments?.assignments.filter(a => a.locked) || [];
-        
-        // Assign topics: locked spots keep their topics, unlocked spots get random topics
-        const assignedSpots = assignTopicsToSpots(progressGrid, lockedOnly);
-        
-        setSpotsWithTopics(assignedSpots);
-      } catch (error) {
-        console.error('Error loading spots with topics:', error);
-      } finally {
-        setIsLoadingSpots(false);
-      }
-    };
-    
-    loadSettingsAndTopics();
+    setIsLoadingSpots(true);
+    try {
+      // Load settings
+      const settings = await getSettingsWithDefaults(user.id);
+      setStudySettings(settings);
+      setSettingsForm({
+        targetDays: settings.targetDays,
+        dailyCap: settings.dailyCap
+      });
+      
+      // Load progress grid to get topics with remaining problems
+      const progressGrid = await getProgressGrid(user.id);
+      setProgressGridData(progressGrid);
+      
+      // Fetch due reviews count for Daily Commute spot
+      const dueReviews = await fetchDueReviews(user.id);
+      const dueReviewCount = dueReviews.length;
+      
+    // Get locked assignments from today
+    const lockedAssignments = getLockedSpotAssignments(user.id);
+    // Only consider spots locked if they are explicitly marked as review-only (Daily Commute)
+    // This cleans up any legacy locked state for non-review spots like Coffee Sanctuary
+    const lockedOnly = lockedAssignments?.assignments.filter(a => {
+      // Check if the spot is actually configured as onlyReviews in POWER_SPOTS
+      const spotConfig = POWER_SPOTS.find(s => s.id === a.spotId);
+      return a.locked && spotConfig && (spotConfig as any).onlyReviews;
+    }) || [];
+      
+      // Assign topics: locked spots keep their topics, unlocked spots get random topics
+      const assignedSpots = assignTopicsToSpots(progressGrid, lockedOnly, dueReviewCount);
+      
+      setSpotsWithTopics(assignedSpots);
+    } catch (error) {
+      console.error('Error loading spots with topics:', error);
+    } finally {
+      setIsLoadingSpots(false);
+    }
   }, [user?.id]);
+
+  // Initial load
+  useEffect(() => {
+    loadSettingsAndTopics();
+  }, [loadSettingsAndTopics]);
+
+  // Reload when returning to locations
+  useEffect(() => {
+    if (step === 'locations') {
+      loadSettingsAndTopics();
+    }
+  }, [step, loadSettingsAndTopics]);
   
   // Save settings handler
   const handleSaveSettings = async () => {
@@ -598,6 +646,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const isRecordingRef = useRef<boolean>(false); // Track recording state for speech recognition restart
+  const isTeachingRecordingRef = useRef<boolean>(false); // Track teaching recording state
   
   // Time tracking - track when the current attempt started
   const problemStartTimeRef = useRef<number>(Date.now());
@@ -682,6 +732,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     setRawTranscript("");
     setAiReport(null);
     setIsRecording(true);
+    isRecordingRef.current = true; // Track in ref for onend handler
     audioChunksRef.current = [];
 
     try {
@@ -696,6 +747,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = true;
       recognitionRef.current.interimResults = true;
+      
       recognitionRef.current.onresult = (event: any) => {
         let current = "";
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -703,12 +755,36 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         }
         if (current) setRawTranscript(prev => prev + " " + current);
       };
+      
+      // Handle when recognition stops (browser timeout/silence detection)
+      recognitionRef.current.onend = () => {
+        // Auto-restart if still in recording mode (check ref, not state)
+        if (isRecordingRef.current) {
+          console.log('[Speech Recognition] Restarting after timeout...');
+          try {
+            recognitionRef.current?.start();
+          } catch (e) {
+            console.error('[Speech Recognition] Failed to restart:', e);
+          }
+        }
+      };
+      
+      // Handle errors
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('[Speech Recognition] Error:', event.error);
+        // Don't restart on 'no-speech' or 'aborted' - user might have stopped intentionally
+        if (event.error === 'network' || event.error === 'not-allowed') {
+          console.error('[Speech Recognition] Critical error, cannot continue');
+        }
+      };
+      
       recognitionRef.current.start();
     }
   };
 
   const handleStopRecording = () => {
     setIsRecording(false);
+    isRecordingRef.current = false; // Track in ref for onend handler
     if (recognitionRef.current) recognitionRef.current.stop();
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.onstop = async () => {
@@ -909,8 +985,9 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
     setSelectedSpot(spot);
     setStep('curating');
     
-    // Lock this spot's topic for the rest of the day (unless it's the random/mystery spot)
-    if (!spot.isRandom && user?.id) {
+    // Lock this spot's topic ONLY if it's the Daily Commute (onlyReviews)
+    // Other spots like Coffee Sanctuary should NOT be locked - they can be refreshed
+    if ((spot as any).onlyReviews && user?.id) {
       lockSpotAssignment(user.id, spot.id, spot.topic, spot.topicDisplay);
       
       // Update local state to reflect the lock
@@ -939,11 +1016,18 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         // Use spaced repetition queue if enabled and user is logged in
         if (useSpacedRepetition && user?.id) {
             // For random/mystery spot, don't pass a topic filter - get mixed problems
+            // For reviews priority spot, pass the flag to include ALL reviews first
             const topicFilter = spot.isRandom ? undefined : spot.topic;
-            const { queue, stats } = await buildSpacedRepetitionQueue(user.id, topicFilter);
+            const { queue, stats } = await buildSpacedRepetitionQueue(
+                user.id, 
+                topicFilter, 
+                spot.reviewsPriority,
+                spot.onlyReviews
+            );
             problems = queue.slice(0, batchSize);
             setStudyStats(stats);
-            console.log(`[Spaced Repetition] Topic: ${spot.isRandom ? 'RANDOM/MIXED' : spot.topic}, Queue:`, problems.map(p => p.title));
+            const mode = spot.onlyReviews ? 'ONLY REVIEWS' : (spot.reviewsPriority ? 'REVIEWS PRIORITY' : (spot.isRandom ? 'RANDOM/MIXED' : spot.topic));
+            console.log(`[Spaced Repetition] Mode: ${mode}, Queue:`, problems.map(p => p.title));
         } else {
             // Fallback to original queue building (no topic filter)
             const allowedDifficulties = DIFFICULTY_MAP[difficultyMode];
@@ -954,7 +1038,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
             console.warn("No problems found for queue in topic:", spot.topic);
             // Fallback: try fetching without topic filter
             const allowedDifficulties = DIFFICULTY_MAP[difficultyMode];
-            const fallbackProblems = await buildProblemQueue([], allowedDifficulties, batchSize);
+            const fallbackProblems = await buildProblemQueue(masteredIds, allowedDifficulties, batchSize);
             if (fallbackProblems.length === 0) {
                 console.error("No problems available in database");
                 setStep('locations');
@@ -1030,6 +1114,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
   const handleStartTeachingRecording = async () => {
     setTeachingRawTranscript("");
     setIsTeachingRecording(true);
+    isTeachingRecordingRef.current = true; // Track in ref for onend handler
     stopSpeaking(); // Stop any TTS in progress
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -1037,6 +1122,7 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = true;
       recognitionRef.current.interimResults = true;
+      
       recognitionRef.current.onresult = (event: any) => {
         let current = "";
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -1044,12 +1130,36 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
         }
         if (current) setTeachingRawTranscript(prev => prev + " " + current);
       };
+      
+      // Handle when recognition stops (browser timeout/silence detection)
+      recognitionRef.current.onend = () => {
+        // Auto-restart if still in recording mode (check ref, not state)
+        if (isTeachingRecordingRef.current) {
+          console.log('[Teaching Speech Recognition] Restarting after timeout...');
+          try {
+            recognitionRef.current?.start();
+          } catch (e) {
+            console.error('[Teaching Speech Recognition] Failed to restart:', e);
+          }
+        }
+      };
+      
+      // Handle errors
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('[Teaching Speech Recognition] Error:', event.error);
+        // Don't restart on 'no-speech' or 'aborted' - user might have stopped intentionally
+        if (event.error === 'network' || event.error === 'not-allowed') {
+          console.error('[Teaching Speech Recognition] Critical error, cannot continue');
+        }
+      };
+      
       recognitionRef.current.start();
     }
   };
 
   const handleStopTeachingRecording = async () => {
     setIsTeachingRecording(false);
+    isTeachingRecordingRef.current = false; // Track in ref for onend handler
     if (recognitionRef.current) recognitionRef.current.stop();
     
     if (!teachingRawTranscript.trim() || !currentProblem || !teachingSession) return;
@@ -1477,6 +1587,8 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                 className={`w-full rounded-2xl sm:rounded-[2.5rem] border-2 p-4 sm:p-6 md:p-8 flex items-center gap-4 sm:gap-6 md:gap-8 text-left transition-all group ${
                   spot.remaining === 0 
                     ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' 
+                    : spot.reviewsPriority && studyStats && studyStats.dueToday > 0
+                    ? 'bg-red-950/30 border-red-500/30 hover:border-red-400/50 hover:bg-red-900/40'
                     : spot.isRandom
                     ? 'bg-emerald-950/30 border-emerald-500/20 hover:border-emerald-400/50 hover:bg-emerald-900/40'
                     : 'bg-white/5 border-white/5 hover:border-gold/40 hover:bg-gold/5'
@@ -1505,8 +1617,15 @@ const WalkieTalkieView: React.FC<WalkieTalkieViewProps> = ({ onHome, onSaveRepor
                         {spot.isRandom ? <Sparkles size={10} className="sm:w-3 sm:h-3" /> : spot.locked ? <Lock size={10} className="sm:w-3 sm:h-3" /> : <Target size={10} className="sm:w-3 sm:h-3" />}
                         {spot.topicDisplay}
                       </span>
+                      {/* Reviews Priority Badge */}
+                      {spot.reviewsPriority && studyStats && studyStats.dueToday > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold bg-red-500/20 border border-red-500/40 text-red-300 animate-pulse">
+                          <AlertCircle size={10} className="sm:w-3 sm:h-3" />
+                          {studyStats.dueToday} review{studyStats.dueToday !== 1 ? 's' : ''} due
+                        </span>
+                      )}
                       {/* Shuffle button for unlocked, non-random spots */}
-                      {!spot.isRandom && !spot.locked && spot.remaining > 0 && (
+                      {!spot.isRandom && !spot.locked && spot.remaining > 0 && !(spot as any).onlyReviews && (
                         <button
                           onClick={(e) => handleRefreshSingleSpot(spot.id, e)}
                           className="w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center bg-white/5 border border-white/10 text-gray-400 hover:bg-blue-500/20 hover:border-blue-500/30 hover:text-blue-300 transition-all"

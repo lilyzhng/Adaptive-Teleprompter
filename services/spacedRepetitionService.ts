@@ -201,10 +201,14 @@ export async function updateProgressAfterAttempt(
  * 
  * @param userId - The user's ID
  * @param topicFilter - Optional: filter problems to a specific topic (problem_group)
+ * @param reviewsPriority - If true, ALL due reviews are included first (ignoring topic filter for reviews), then remaining slots filled with topic-filtered new problems
+ * @param onlyReviews - If true, ONLY due reviews are included (no new problems)
  */
 export async function buildSpacedRepetitionQueue(
     userId: string,
-    topicFilter?: string
+    topicFilter?: string,
+    reviewsPriority: boolean = false,
+    onlyReviews: boolean = false
 ): Promise<{
     queue: BlindProblem[];
     stats: StudyStats;
@@ -251,15 +255,27 @@ export async function buildSpacedRepetitionQueue(
     const effectiveDaysLeft = Math.max(1, daysLeft - bufferDays);
     const newPerDay = Math.ceil(remainingNew / effectiveDaysLeft);
     
-    // Get problems that have progress and are due for review (filtered by topic)
-    const filteredDueReviews = dueReviews.filter(p => 
-        allProblems.some(prob => prob.title === p.problemTitle)
-    );
+    // Get problems that have progress and are due for review
+    let filteredDueReviews: UserProblemProgress[];
+    let allProblemsForReviews = allProblems;
+    
+    if (reviewsPriority) {
+        // REVIEWS PRIORITY MODE: Get ALL due reviews regardless of topic
+        filteredDueReviews = dueReviews;
+        // Need to get all problems (not just filtered ones) to find review problems
+        allProblemsForReviews = await fetchAllBlindProblems();
+        console.log(`[Spaced Repetition] Reviews Priority Mode: Including ALL ${dueReviews.length} due reviews`);
+    } else {
+        // STANDARD MODE: Filter reviews by topic
+        filteredDueReviews = dueReviews.filter(p => 
+            allProblems.some(prob => prob.title === p.problemTitle)
+        );
+    }
     
     const dueProblems = filteredDueReviews
         .filter(p => p.reviewsCompleted < p.reviewsNeeded)
         .map(progress => {
-            const problem = allProblems.find(p => p.title === progress.problemTitle);
+            const problem = allProblemsForReviews.find(p => p.title === progress.problemTitle);
             return problem ? { problem, progress } : null;
         })
         .filter((item): item is { problem: BlindProblem; progress: UserProblemProgress } => item !== null);
@@ -282,9 +298,12 @@ export async function buildSpacedRepetitionQueue(
         queue.push(problem);
     }
     
-    // Fill remaining slots with new problems
-    const slotsForNew = Math.min(newPerDay, settings.dailyCap - queue.length);
-    queue.push(...newProblems.slice(0, slotsForNew));
+    // Fill remaining slots with new problems (unless onlyReviews is true)
+    let slotsForNew = 0;
+    if (!onlyReviews) {
+        slotsForNew = Math.min(newPerDay, settings.dailyCap - queue.length);
+        queue.push(...newProblems.slice(0, slotsForNew));
+    }
     
     // Calculate stats (for the full set, not filtered)
     const fullAllProgress = allProgress;
@@ -304,7 +323,8 @@ export async function buildSpacedRepetitionQueue(
         }
     };
     
-    console.log(`[Spaced Repetition] Queue built: ${queue.length} problems (${stats.todaysQueue.reviews} reviews + ${stats.todaysQueue.newProblems} new)${topicFilter ? ` [Topic: ${topicFilter}]` : ''}`);
+    const modeLabel = reviewsPriority ? 'REVIEWS PRIORITY' : (topicFilter ? `Topic: ${topicFilter}` : 'All Topics');
+    console.log(`[Spaced Repetition] Queue built: ${queue.length} problems (${stats.todaysQueue.reviews} reviews + ${stats.todaysQueue.newProblems} new) [${modeLabel}]`);
     
     return { queue, stats };
 }
