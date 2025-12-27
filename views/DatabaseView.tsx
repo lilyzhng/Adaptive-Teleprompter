@@ -933,17 +933,16 @@ const DatabaseView: React.FC<DatabaseViewProps> = ({
                                                  <Clock size={16} className="text-blue-400" />
                                                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Today's Study Time</span>
                                              </div>
-                                             <div className="flex items-baseline gap-2">
-                                                 <span className="text-4xl font-bold text-blue-400">
-                                                     {todayTotalTime > 0 ? formatTimeSpent(todayTotalTime) : '0m'}
-                                                 </span>
-                                             </div>
-                                             <div className="text-xs text-gray-500 mt-3">
-                                                 {todayTotalTime === 0 
-                                                     ? 'Start practicing to track time' 
-                                                     : `Across ${todayReports.length} session${todayReports.length !== 1 ? 's' : ''}`
-                                                 }
-                                             </div>
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-4xl font-bold text-blue-400">
+                                                    {todayTotalTime > 0 ? formatTimeSpent(todayTotalTime) : '0m'}
+                                                </span>
+                                            </div>
+                                            {todayTotalTime === 0 && (
+                                                <div className="text-xs text-gray-500 mt-3">
+                                                    Start practicing to track time
+                                                </div>
+                                            )}
                                          </div>
                                      </div>
                                      
